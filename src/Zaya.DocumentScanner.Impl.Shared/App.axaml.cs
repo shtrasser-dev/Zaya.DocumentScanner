@@ -42,7 +42,8 @@ public partial class App : Application
 
         _mainWindow = new MainWindow(
             _serviceProvider.GetRequiredService<IDocumentScanService>(),
-            _serviceProvider.GetRequiredService<IRawImageFileLoader>());
+            _serviceProvider.GetRequiredService<IRawImageFileLoader>(),
+            _serviceProvider.GetRequiredService<IDocxExportService>());
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

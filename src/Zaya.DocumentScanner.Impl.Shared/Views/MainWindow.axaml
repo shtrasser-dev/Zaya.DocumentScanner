@@ -6,6 +6,7 @@
     <DockPanel Margin="12">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
             <Button Name="ScanButton" Content="Открыть и распознать..." Click="OnScanClick" />
+            <Button Name="SaveDocxButton" Content="Сохранить как DOCX..." Click="OnSaveDocxClick" IsEnabled="False" />
             <TextBlock Name="StatusText" VerticalAlignment="Center" />
         </StackPanel>
         <TextBox Name="ResultText"

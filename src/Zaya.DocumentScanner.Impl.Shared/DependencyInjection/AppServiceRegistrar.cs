@@ -18,5 +18,6 @@ public static class AppServiceRegistrar
         services.AddSingleton<ITextLayoutService, ProximityTextLayoutService>();
         services.AddSingleton<IDocumentScanService, DocumentScanService>();
         services.AddSingleton<IRawImageFileLoader, RawImageFileLoader>();
+        services.AddSingleton<IDocxExportService, DocxExportService>();
     }
 }
