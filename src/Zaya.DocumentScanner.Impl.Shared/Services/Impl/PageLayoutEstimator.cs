@@ -23,7 +23,7 @@ public static class PageLayoutEstimator
     {
         var left = Percentile(lines.Select(l => l.MinX).OrderBy(v => v).ToList(), 0.1f);
         var right = Percentile(lines.Select(l => l.MaxX).OrderBy(v => v).ToList(), 0.9f);
-        var tolerance = MedianHeight(lines) * 1.5f;
+        var tolerance = MedianHeight(lines) * 2.5f;
         return (left, right, tolerance);
     }
 

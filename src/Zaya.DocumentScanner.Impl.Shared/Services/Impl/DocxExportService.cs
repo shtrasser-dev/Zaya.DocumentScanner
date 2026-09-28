@@ -32,20 +32,23 @@ public sealed class DocxExportService : IDocxExportService
 
             foreach (var paragraphLines in paragraphs)
             {
-                var alignment = DocumentLineGrouping.ClassifyAlignment(paragraphLines, leftMargin, rightMargin, tolerance);
-                var sentences = DocumentLineGrouping.JoinSentences(paragraphLines);
-
-                var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
-                for (var i = 0; i < sentences.Count; i++)
+                var runs = DocumentLineGrouping.SplitByAlignment(paragraphLines, leftMargin, rightMargin, tolerance);
+                foreach (var (alignment, alignedLines) in runs)
                 {
-                    if (i > 0)
-                        run.Append(new Break());
-                    run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
-                }
+                    var sentences = DocumentLineGrouping.JoinSentences(alignedLines);
 
-                var paragraphProperties = new ParagraphProperties(
-                    new Justification { Val = ToJustification(alignment) });
-                body.Append(new Paragraph(paragraphProperties, run));
+                    var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
+                    for (var i = 0; i < sentences.Count; i++)
+                    {
+                        if (i > 0)
+                            run.Append(new Break());
+                        run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
+                    }
+
+                    var paragraphProperties = new ParagraphProperties(
+                        new Justification { Val = ToJustification(alignment) });
+                    body.Append(new Paragraph(paragraphProperties, run));
+                }
             }
         }
 
