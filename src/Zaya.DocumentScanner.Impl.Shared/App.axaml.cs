@@ -40,7 +40,9 @@ public partial class App : Application
         AppServiceRegistrar.Register(appServices, logging);
         _serviceProvider = appServices.BuildServiceProvider();
 
-        _mainWindow = new MainWindow();
+        _mainWindow = new MainWindow(
+            _serviceProvider.GetRequiredService<IDocumentScanService>(),
+            _serviceProvider.GetRequiredService<IRawImageFileLoader>());
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
