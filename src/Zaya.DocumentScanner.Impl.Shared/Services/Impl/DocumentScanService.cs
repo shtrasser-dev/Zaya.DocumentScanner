@@ -64,18 +64,31 @@ public sealed class DocumentScanService : IDocumentScanService
         foreach (var line in lines)
         {
             seenThisFrame.Add(line.Id);
-            var topY = line.Bounds.MinY;
 
             if (tracked.TryGetValue(line.Id, out var existing))
             {
                 if (line.Text.Trim().Length >= existing.Text.Trim().Length)
+                {
                     existing.Text = line.Text;
-                existing.TopY = topY;
+                    existing.MinX = line.Bounds.MinX;
+                    existing.MaxX = line.Bounds.MaxX;
+                    existing.Height = line.Bounds.TextHeight;
+                }
+
+                existing.TopY = line.Bounds.MinY;
                 existing.MissingFrames = 0;
             }
             else
             {
-                tracked[line.Id] = new TrackedLine { Text = line.Text, TopY = topY, MissingFrames = 0 };
+                tracked[line.Id] = new TrackedLine
+                {
+                    Text = line.Text,
+                    TopY = line.Bounds.MinY,
+                    MinX = line.Bounds.MinX,
+                    MaxX = line.Bounds.MaxX,
+                    Height = line.Bounds.TextHeight,
+                    MissingFrames = 0,
+                };
             }
         }
 
@@ -128,13 +141,18 @@ public sealed class DocumentScanService : IDocumentScanService
             deduped.Add(line);
         }
 
-        return deduped.Select(l => new ScannedLine(l.Text.Trim(), l.TopY)).ToList();
+        return deduped
+            .Select(l => new ScannedLine(l.Text.Trim(), l.TopY, l.MinX, l.MaxX, l.Height))
+            .ToList();
     }
 
     private sealed class TrackedLine
     {
         public required string Text { get; set; }
         public required float TopY { get; set; }
+        public float MinX { get; set; }
+        public float MaxX { get; set; }
+        public float Height { get; set; }
         public int MissingFrames { get; set; }
     }
 }

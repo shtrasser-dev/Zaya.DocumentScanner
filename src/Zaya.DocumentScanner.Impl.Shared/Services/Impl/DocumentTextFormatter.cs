@@ -10,6 +10,6 @@ public static class DocumentTextFormatter
         var paragraphs = DocumentLineGrouping.GroupIntoParagraphs(lines);
         return string.Join(
             "\n\n",
-            paragraphs.Select(p => string.Join("\n", p.Select(l => l.Text))));
+            paragraphs.Select(p => string.Join("\n", DocumentLineGrouping.JoinSentences(p))));
     }
 }

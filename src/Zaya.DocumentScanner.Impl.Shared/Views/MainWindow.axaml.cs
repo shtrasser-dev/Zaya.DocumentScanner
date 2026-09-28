@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     private readonly IRawImageFileLoader _fileLoader;
     private readonly IDocxExportService _docxExportService;
     private IReadOnlyList<ScannedLine> _lastScan = [];
+    private PageMetrics _lastPage = new(0, 0);
 
     public MainWindow()
     {
@@ -55,6 +56,7 @@ public partial class MainWindow : Window
         try
         {
             var page = _fileLoader.Load(path);
+            _lastPage = new PageMetrics(page.Width, page.Height);
             var stopwatch = Stopwatch.StartNew();
             _lastScan = await _scanService.ScanAsync(page, new DocumentScanOptions());
             stopwatch.Stop();
@@ -92,7 +94,7 @@ public partial class MainWindow : Window
 
         try
         {
-            _docxExportService.Export(_lastScan, path);
+            _docxExportService.Export(_lastScan, _lastPage, path);
             StatusText.Text = $"Сохранено: {path}";
         }
         catch (Exception ex)
