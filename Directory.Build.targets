@@ -1,0 +1,15 @@
+<Project>
+  <!-- No role yet (no interface/plugin split): Version = Major.HostMinor.HostPatch -->
+  <PropertyGroup>
+    <Version>$(ZayaPrimitivesMajor).$(ZayaHostVersionMinor).$(ZayaHostVersionPatch)</Version>
+  </PropertyGroup>
+
+  <Target Name="ValidateZayaVersion" BeforeTargets="BeforeBuild;GenerateNuspec">
+    <Error
+      Condition="'$(ZayaPrimitivesVersion)' == ''"
+      Text="ZayaPrimitivesVersion must be set in Directory.Build.props." />
+    <Error
+      Condition="$([System.Version]::Parse('$(Version)').Major) != $([System.Version]::Parse('$(ZayaPrimitivesVersion)').Major)"
+      Text="Version $(Version) major must equal Zaya.Primitives major $([System.Version]::Parse('$(ZayaPrimitivesVersion)').Major)." />
+  </Target>
+</Project>

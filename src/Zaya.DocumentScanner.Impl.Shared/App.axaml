@@ -1,0 +1,18 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Zaya.DocumentScanner.Impl.Shared.App">
+    <Application.Styles>
+        <FluentTheme>
+            <FluentTheme.Palettes>
+                <ColorPaletteResources x:Key="Light"
+                                       RegionColor="#F3F3F3"
+                                       Accent="#0078D4"
+                                       ErrorText="#C42B1C" />
+                <ColorPaletteResources x:Key="Dark"
+                                       RegionColor="#1E1E1E"
+                                       Accent="#3794FF"
+                                       ErrorText="#FF6B6B" />
+            </FluentTheme.Palettes>
+        </FluentTheme>
+    </Application.Styles>
+</Application>

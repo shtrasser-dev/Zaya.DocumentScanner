@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Zaya.DocumentScanner.Impl.Shared.Views.MainWindow"
+        Title="Zaya Document Scanner"
+        Width="800" Height="600">
+    <Grid>
+        <TextBlock Text="Zaya.DocumentScanner"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   FontSize="24" />
+    </Grid>
+</Window>

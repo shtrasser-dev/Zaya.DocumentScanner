@@ -1,0 +1,140 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build host
+        run: .\build.cmd
+
+      - name: Upload host artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: host
+          path: |
+            out/Zaya.DocumentScanner-*.zip
+            out/version.txt
+            out/channel.txt
+          retention-days: 7
+
+  create-release:
+    needs: build
+    if: contains(github.server_url, 'github.com')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: host
+          path: host
+
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            function extractUnreleased(markdown) {
+              const header = /^## \[Unreleased\]\s*$/m.exec(markdown);
+              if (!header) return '';
+              const start = header.index + header[0].length;
+              const rest = markdown.slice(start).replace(/^\r?\n/, '');
+              const next = rest.search(/^## \[/m);
+              return (next < 0 ? rest : rest.slice(0, next)).trim();
+            }
+
+            let changelog = '';
+            if (fs.existsSync('CHANGELOG.md')) {
+              changelog = extractUnreleased(fs.readFileSync('CHANGELOG.md', 'utf8'));
+            } else {
+              core.warning('CHANGELOG.md not found; release body will contain metadata only.');
+            }
+            if (!changelog) {
+              core.warning('CHANGELOG.md [Unreleased] is empty; release body will contain metadata only.');
+            }
+
+            const version = fs.readFileSync('host/version.txt', 'utf8').trim();
+            const channel = fs.readFileSync('host/channel.txt', 'utf8').trim();
+            const zipName = `Zaya.DocumentScanner-${version}.zip`;
+            const zipPath = path.join('host', zipName);
+            if (!fs.existsSync(zipPath)) {
+              core.setFailed(`Missing ${zipName}`);
+              return;
+            }
+
+            const tag = `app-v${version}`;
+            const latestTag = `app-v${channel}-latest`;
+            const releaseName = `Zaya.DocumentScanner v${version}`;
+            const meta = [
+              `version: ${version}`,
+              `primitivesChannel: ${channel}`,
+              '',
+              `Zaya.DocumentScanner v${version} (Primitives channel ${channel}).`,
+              '',
+              `Download \`${zipName}\`, extract, and run \`Zaya.DocumentScanner.exe\`.`,
+              '',
+              'Host does not self-update: open this release page from the app when a newer version is available.',
+            ].join('\n');
+            const body = changelog ? `${changelog}\n\n---\n\n${meta}` : meta;
+
+            async function createOrReplaceRelease(tagName, name, releaseBody, makeLatest) {
+              try {
+                const existing = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: tagName,
+                });
+                await github.rest.repos.deleteRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: existing.data.id,
+                });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `tags/${tagName}`,
+                });
+              } catch (e) {
+                if (e.status !== 404 && e.status !== 422) throw e;
+              }
+
+              const release = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tagName,
+                name,
+                body: releaseBody,
+                make_latest: makeLatest ? 'true' : 'false',
+                generate_release_notes: false,
+              });
+
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.data.id,
+                name: zipName,
+                data: fs.readFileSync(zipPath),
+              });
+            }
+
+            await createOrReplaceRelease(tag, releaseName, body, true);
+            await createOrReplaceRelease(latestTag, releaseName, body, false);

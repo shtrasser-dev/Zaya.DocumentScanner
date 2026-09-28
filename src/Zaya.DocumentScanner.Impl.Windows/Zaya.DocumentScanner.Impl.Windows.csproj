@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>13</LangVersion>
+    <AssemblyName>Zaya.DocumentScanner</AssemblyName>
+    <Title>Zaya Document Scanner — Windows</Title>
+    <Description>Windows host for Zaya Document Scanner.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Authors>SHTrassEr</Authors>
+    <RepositoryUrl>https://github.com/shtrasser-dev/Zaya.DocumentScanner</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zaya.DocumentScanner.Impl.Shared\Zaya.DocumentScanner.Impl.Shared.csproj" />
+  </ItemGroup>
+
+  <Target Name="CleanExtraPublishFiles" AfterTargets="Publish">
+    <ItemGroup>
+      <ExtraFiles Include="$(PublishDir)*.pdb;$(PublishDir)*.xml" />
+    </ItemGroup>
+    <Delete Files="@(ExtraFiles)" />
+  </Target>
+
+</Project>

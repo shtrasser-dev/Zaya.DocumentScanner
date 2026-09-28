@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <ZayaPrimitivesVersion>2.0.0</ZayaPrimitivesVersion>
+    <ZayaPrimitivesMajor>$([System.Version]::Parse('$(ZayaPrimitivesVersion)').Major)</ZayaPrimitivesMajor>
+
+    <ZayaLoggingVersion>1.0.0</ZayaLoggingVersion>
+
+    <!-- Host app default when ZayaVersionRole is unset. -->
+    <ZayaHostVersionMinor>0</ZayaHostVersionMinor>
+    <ZayaHostVersionPatch>0</ZayaHostVersionPatch>
+  </PropertyGroup>
+</Project>

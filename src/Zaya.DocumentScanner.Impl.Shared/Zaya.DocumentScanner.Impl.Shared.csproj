@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>13</LangVersion>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <Title>Zaya Document Scanner</Title>
+    <Description>Scans documents and exports them to PDF/DOCX — shared UI and logic.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Authors>SHTrassEr</Authors>
+    <RepositoryUrl>https://github.com/shtrasser-dev/Zaya.DocumentScanner</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.10" />
+    <PackageReference Include="Zaya.Logging" Version="$(ZayaLoggingVersion)" />
+    <PackageReference Include="Zaya.Logging.Impl" Version="$(ZayaLoggingVersion)" />
+    <PackageReference Include="Zaya.Logging.Impl.Microsoft" Version="$(ZayaLoggingVersion)" />
+    <PackageReference Include="Zaya.Primitives" Version="$(ZayaPrimitivesVersion)" />
+  </ItemGroup>
+
+</Project>
