@@ -12,6 +12,13 @@ public sealed class DocxExportService : IDocxExportService
     private const int A4HeightTwips = 16838;
     private const int MarginTwips = 1440;
 
+    // Whole-word ink density reliably flags real bold labels (e.g. "Пол:"), but for short/numeric
+    // tokens (measurements, lab values) its false-positive rate is high enough that true-bold and
+    // false-positive words measure in fully overlapping, sometimes inverted ranges — no threshold
+    // fixes that. Off for now; the detection/rendering code stays in place for when a better
+    // per-word signal (e.g. stroke-width via image morphology) is worth building.
+    private const bool BoldDetectionEnabled = false;
+
     public void Export(IReadOnlyList<ScannedLine> lines, PageMetrics page, string path)
     {
         using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
@@ -101,34 +108,36 @@ public sealed class DocxExportService : IDocxExportService
         var paragraph = new Paragraph(paragraphProperties);
 
         // Flatten to one entry per original word, each carrying whether a hard line break
-        // (<w:br/>) precedes it and which original scanned line it came from. A break belongs
-        // only at the start of a new sentence unit — lines merged together by word-wrap within
-        // one unit are joined by a plain space instead, same as everywhere else in this pipeline
-        // that already draws that distinction. LineIndex keeps the bold-smoothing pass from
-        // treating the last word of one physical line and the first word of the next as neighbors.
-        var words = new List<(string Text, bool IsBold, bool BreakBefore, int LineIndex)>();
-        var lineIndex = -1;
+        // (<w:br/>) precedes it. A break belongs only at the start of a new sentence unit — lines
+        // merged together by word-wrap within one unit are joined by a plain space instead, same
+        // as everywhere else in this pipeline that already draws that distinction.
+        //
+        // No smoothing here: this document bolds individual words deliberately (a field's label
+        // but not its value, e.g. "Пол:" bold / "Мужской" not) — a real, per-word distinction, not
+        // noise to be blurred toward its neighbors. Ink density still misreads some words on their
+        // own (an open/round-heavy word can measure lower than a denser one at the same weight),
+        // but "smooth toward neighbors" was actively wrong for the genuine label/value case and
+        // didn't reliably fix the real noise either, so the raw per-word reading is used as-is.
+        var words = new List<(string Text, bool IsBold, bool BreakBefore)>();
         foreach (var unit in units)
         {
             var isFirstWordOfUnit = true;
             foreach (var line in unit.Lines)
             {
-                lineIndex++;
                 foreach (var word in line.Words)
                 {
-                    words.Add((word.Text, word.InkDensity >= boldThreshold, isFirstWordOfUnit && words.Count > 0, lineIndex));
+                    var isBold = BoldDetectionEnabled && word.InkDensity >= boldThreshold;
+                    words.Add((word.Text, isBold, isFirstWordOfUnit && words.Count > 0));
                     isFirstWordOfUnit = false;
                 }
             }
         }
 
-        SmoothIsolatedBoldFlags(words);
-
         Run? run = null;
         bool? runIsBold = null;
         var pendingSpace = false;
 
-        foreach (var (text, isBold, breakBefore, _) in words)
+        foreach (var (text, isBold, breakBefore) in words)
         {
             if (run is null || isBold != runIsBold)
             {
@@ -151,32 +160,6 @@ public sealed class DocxExportService : IDocxExportService
         }
 
         return paragraph;
-    }
-
-    /// <summary>
-    /// Flips a single word's bold flag to match its neighbors when both of them agree with each
-    /// other but not with it — removes isolated single-word ink-density noise (a stray word
-    /// inside a regular sentence spiking over the threshold, or a gap inside an otherwise-bold
-    /// phrase dipping under it) without touching a genuine multi-word run either way. Only ever
-    /// looks at neighbors on the SAME original scanned line — the last word of one physical line
-    /// and the first word of the next are not really "neighbors" for this purpose, and treating
-    /// them as such can flip two adjacent-but-unrelated words' classifications in opposite
-    /// directions when their true values happen to alternate (bold, not, bold, not, ...).
-    /// </summary>
-    private static void SmoothIsolatedBoldFlags(List<(string Text, bool IsBold, bool BreakBefore, int LineIndex)> words)
-    {
-        if (words.Count < 3)
-            return;
-
-        var original = words.Select(w => w.IsBold).ToList();
-        for (var i = 1; i < words.Count - 1; i++)
-        {
-            if (words[i - 1].LineIndex != words[i].LineIndex || words[i + 1].LineIndex != words[i].LineIndex)
-                continue;
-
-            if (original[i - 1] == original[i + 1] && original[i] != original[i - 1])
-                words[i] = (words[i].Text, original[i - 1], words[i].BreakBefore, words[i].LineIndex);
-        }
     }
 
     private static Table BuildColumnsTable(
