@@ -29,12 +29,13 @@ public sealed class DocxExportService : IDocxExportService
             var leftMargin = PageLayoutEstimator.EstimateLeftMargin(lines);
             var rightMargin = PageLayoutEstimator.EstimateRightMargin(lines);
             var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * 2.5f;
+            var boldThreshold = PageLayoutEstimator.EstimateBoldDensityThreshold(lines);
 
             foreach (var paragraphLines in paragraphs)
             {
                 if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
                 {
-                    AppendAlignedParagraphs(body, paragraphLines, page.HeightPx, leftMargin, rightMargin, tolerance);
+                    AppendAlignedParagraphs(body, paragraphLines, page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold);
                     continue;
                 }
 
@@ -43,12 +44,12 @@ public sealed class DocxExportService : IDocxExportService
                 // kept in its own ordinary paragraph before/after the table, in original reading order.
                 var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
                 foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance);
+                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold);
 
-                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx, rightMargin, tolerance));
+                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx, rightMargin, tolerance, boldThreshold));
 
                 foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance);
+                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold);
             }
         }
 
@@ -71,33 +72,24 @@ public sealed class DocxExportService : IDocxExportService
     /// </summary>
     private static void AppendAlignedParagraphs(
         Body body, IReadOnlyList<ScannedLine> groupLines, int pageHeightPx,
-        float leftMargin, float rightMargin, float tolerance)
+        float leftMargin, float rightMargin, float tolerance, double boldThreshold)
     {
         foreach (var (alignment, units) in DocumentLineGrouping.SplitByAlignment(groupLines, leftMargin, rightMargin, tolerance))
-            body.Append(BuildParagraph(units, pageHeightPx, alignment));
+            body.Append(BuildParagraph(units, pageHeightPx, alignment, boldThreshold));
     }
 
     private static Paragraph BuildParagraph(
-        List<DocumentLineGrouping.SentenceUnit> units, int pageHeightPx, LineAlignment alignment)
+        List<DocumentLineGrouping.SentenceUnit> units, int pageHeightPx, LineAlignment alignment, double boldThreshold)
     {
         var allLines = units.SelectMany(u => u.Lines).ToList();
         var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(allLines, pageHeightPx) * 2))
             .ToString();
 
-        var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
-        for (var i = 0; i < units.Count; i++)
-        {
-            if (i > 0)
-                run.Append(new Break());
-            run.Append(new Text(units[i].Text) { Space = SpaceProcessingModeValues.Preserve });
-        }
-
-        // Without this, Word's own default paragraph spacing (space-after ~8pt, ~1.08x line
-        // height) applies to every one of the dozens of paragraphs this produces — a source form
-        // set with no such spacing then needs noticeably more pages once reproduced with it.
         var paragraphProperties = new ParagraphProperties(
+            // Without this, Word's own default paragraph spacing (space-after ~8pt, ~1.08x line
+            // height) applies to every one of the dozens of paragraphs this produces — a source
+            // form set with no such spacing then needs noticeably more pages once reproduced with it.
             new SpacingBetweenLines { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto });
-
         if (alignment != LineAlignment.Left)
         {
             paragraphProperties.Append(new Justification
@@ -106,12 +98,90 @@ public sealed class DocxExportService : IDocxExportService
             });
         }
 
-        return new Paragraph(paragraphProperties, run);
+        var paragraph = new Paragraph(paragraphProperties);
+
+        // Flatten to one entry per original word, each carrying whether a hard line break
+        // (<w:br/>) precedes it and which original scanned line it came from. A break belongs
+        // only at the start of a new sentence unit — lines merged together by word-wrap within
+        // one unit are joined by a plain space instead, same as everywhere else in this pipeline
+        // that already draws that distinction. LineIndex keeps the bold-smoothing pass from
+        // treating the last word of one physical line and the first word of the next as neighbors.
+        var words = new List<(string Text, bool IsBold, bool BreakBefore, int LineIndex)>();
+        var lineIndex = -1;
+        foreach (var unit in units)
+        {
+            var isFirstWordOfUnit = true;
+            foreach (var line in unit.Lines)
+            {
+                lineIndex++;
+                foreach (var word in line.Words)
+                {
+                    words.Add((word.Text, word.InkDensity >= boldThreshold, isFirstWordOfUnit && words.Count > 0, lineIndex));
+                    isFirstWordOfUnit = false;
+                }
+            }
+        }
+
+        SmoothIsolatedBoldFlags(words);
+
+        Run? run = null;
+        bool? runIsBold = null;
+        var pendingSpace = false;
+
+        foreach (var (text, isBold, breakBefore, _) in words)
+        {
+            if (run is null || isBold != runIsBold)
+            {
+                var runProperties = isBold
+                    ? new RunProperties(new Bold(), new FontSize { Val = fontHalfPoints })
+                    : new RunProperties(new FontSize { Val = fontHalfPoints });
+                run = new Run(runProperties);
+                paragraph.Append(run);
+                runIsBold = isBold;
+            }
+
+            if (breakBefore)
+            {
+                run.Append(new Break());
+                pendingSpace = false;
+            }
+
+            run.Append(new Text((pendingSpace ? " " : "") + text) { Space = SpaceProcessingModeValues.Preserve });
+            pendingSpace = true;
+        }
+
+        return paragraph;
+    }
+
+    /// <summary>
+    /// Flips a single word's bold flag to match its neighbors when both of them agree with each
+    /// other but not with it — removes isolated single-word ink-density noise (a stray word
+    /// inside a regular sentence spiking over the threshold, or a gap inside an otherwise-bold
+    /// phrase dipping under it) without touching a genuine multi-word run either way. Only ever
+    /// looks at neighbors on the SAME original scanned line — the last word of one physical line
+    /// and the first word of the next are not really "neighbors" for this purpose, and treating
+    /// them as such can flip two adjacent-but-unrelated words' classifications in opposite
+    /// directions when their true values happen to alternate (bold, not, bold, not, ...).
+    /// </summary>
+    private static void SmoothIsolatedBoldFlags(List<(string Text, bool IsBold, bool BreakBefore, int LineIndex)> words)
+    {
+        if (words.Count < 3)
+            return;
+
+        var original = words.Select(w => w.IsBold).ToList();
+        for (var i = 1; i < words.Count - 1; i++)
+        {
+            if (words[i - 1].LineIndex != words[i].LineIndex || words[i + 1].LineIndex != words[i].LineIndex)
+                continue;
+
+            if (original[i - 1] == original[i + 1] && original[i] != original[i - 1])
+                words[i] = (words[i].Text, original[i - 1], words[i].BreakBefore, words[i].LineIndex);
+        }
     }
 
     private static Table BuildColumnsTable(
         List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, int pageHeightPx,
-        float rightMargin, float rightMarginTolerance)
+        float rightMargin, float rightMarginTolerance, double boldThreshold)
     {
         var usableWidthTwips = A4WidthTwips - 2 * MarginTwips;
 
@@ -136,18 +206,19 @@ public sealed class DocxExportService : IDocxExportService
                 new GridColumn { Width = leftWidthTwips.ToString() },
                 new GridColumn { Width = rightWidthTwips.ToString() }),
             new TableRow(
-                BuildCell(left, leftWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance),
-                BuildCell(right, rightWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance)));
+                BuildCell(left, leftWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance, boldThreshold),
+                BuildCell(right, rightWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance, boldThreshold)));
     }
 
     private static TableCell BuildCell(
-        List<ScannedLine> lines, int widthTwips, int pageHeightPx, float rightMargin, float rightMarginTolerance)
+        List<ScannedLine> lines, int widthTwips, int pageHeightPx, float rightMargin, float rightMarginTolerance,
+        double boldThreshold)
     {
         var units = DocumentLineGrouping.SplitIntoSentenceUnits(lines, rightMargin, rightMarginTolerance);
         var cell = new TableCell(
             new TableCellProperties(
                 new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
-        cell.Append(BuildParagraph(units, pageHeightPx, LineAlignment.Left));
+        cell.Append(BuildParagraph(units, pageHeightPx, LineAlignment.Left, boldThreshold));
         return cell;
     }
 }

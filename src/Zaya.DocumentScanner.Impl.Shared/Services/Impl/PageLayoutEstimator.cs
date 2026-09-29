@@ -61,6 +61,15 @@ public static class PageLayoutEstimator
     /// <summary>Typical (median) line height in px, for scaling other layout tolerances.</summary>
     public static float EstimateTypicalHeight(IReadOnlyList<ScannedLine> lines) => MedianHeight(lines);
 
+    /// <summary>
+    /// The ink-density value that best separates this document's own words into two weight
+    /// classes (Otsu split, not a fixed constant — validated against a real scan, whole-word ink
+    /// density clusters cleanly into "bold" and "regular" groups, but the exact values are
+    /// page/lighting-dependent, so the cutoff has to be found per document).
+    /// </summary>
+    public static double EstimateBoldDensityThreshold(IReadOnlyList<ScannedLine> lines)
+        => InkDensityEstimator.OtsuSplit(lines.SelectMany(l => l.Words).Select(w => w.InkDensity).ToList());
+
     private static float MedianHeight(IReadOnlyList<ScannedLine> lines)
     {
         var heights = lines.Select(l => l.Height).Where(h => h > 0).ToList();

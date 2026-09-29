@@ -22,6 +22,7 @@ public sealed class DocumentScanService : IDocumentScanService
         CancellationToken cancellationToken = default)
     {
         var windowHeight = options.WindowHeight ?? Math.Max(1, page.Height / 4);
+        var inkThreshold = InkDensityEstimator.ComputePageInkThreshold(page);
 
         using var ocrSession = await _ocr.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         using var layoutSession = await _layout.CreateSessionAsync(
@@ -42,7 +43,7 @@ public sealed class DocumentScanService : IDocumentScanService
             var offset = new OffsetOcrResult(trusted, ocrResult.Confidence, new Vector2(0, y));
             var textResult = await layoutSession.ProcessAsync(offset, cancellationToken).ConfigureAwait(false);
 
-            Accumulate(textResult.Paragraphs.SelectMany(p => p.Lines), tracked, committed, options.MissingFrameGrace);
+            Accumulate(textResult.Paragraphs.SelectMany(p => p.Lines), tracked, committed, options.MissingFrameGrace, page, inkThreshold);
         }
 
         committed.AddRange(tracked.Values);
@@ -60,7 +61,9 @@ public sealed class DocumentScanService : IDocumentScanService
         IEnumerable<Zaya.Primitives.OCR.ITextLine> lines,
         Dictionary<Guid, TrackedLine> tracked,
         List<TrackedLine> committed,
-        int missingFrameGrace)
+        int missingFrameGrace,
+        IRawImage page,
+        double inkThreshold)
     {
         var seenThisFrame = new HashSet<Guid>();
         foreach (var line in lines)
@@ -75,6 +78,7 @@ public sealed class DocumentScanService : IDocumentScanService
                     existing.MinX = line.Bounds.MinX;
                     existing.MaxX = line.Bounds.MaxX;
                     existing.Height = line.Bounds.TextHeight;
+                    existing.Words = ToScannedWords(line.Words, page, inkThreshold);
                 }
 
                 existing.TopY = line.Bounds.MinY;
@@ -89,6 +93,7 @@ public sealed class DocumentScanService : IDocumentScanService
                     MinX = line.Bounds.MinX,
                     MaxX = line.Bounds.MaxX,
                     Height = line.Bounds.TextHeight,
+                    Words = ToScannedWords(line.Words, page, inkThreshold),
                     MissingFrames = 0,
                 };
             }
@@ -144,9 +149,16 @@ public sealed class DocumentScanService : IDocumentScanService
         }
 
         return deduped
-            .Select(l => new ScannedLine(l.Text.Trim(), l.TopY, l.MinX, l.MaxX, l.Height))
+            .Select(l => new ScannedLine(l.Text.Trim(), l.TopY, l.MinX, l.MaxX, l.Height, l.Words))
             .ToList();
     }
+
+    private static List<ScannedWord> ToScannedWords(
+        IReadOnlyList<Zaya.Primitives.OCR.IOCRWord> words, IRawImage page, double inkThreshold)
+        => words.Select(w => new ScannedWord(
+            w.Text, w.Bounds.MinX, w.Bounds.MaxX, w.Bounds.MinY, w.Bounds.MaxY,
+            InkDensityEstimator.MeasureDensity(page, w.Bounds.MinX, w.Bounds.MinY, w.Bounds.MaxX, w.Bounds.MaxY, inkThreshold)))
+            .ToList();
 
     private sealed class TrackedLine
     {
@@ -155,6 +167,7 @@ public sealed class DocumentScanService : IDocumentScanService
         public float MinX { get; set; }
         public float MaxX { get; set; }
         public float Height { get; set; }
+        public List<ScannedWord> Words { get; set; } = [];
         public int MissingFrames { get; set; }
     }
 }
