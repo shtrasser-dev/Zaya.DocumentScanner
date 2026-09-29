@@ -26,14 +26,11 @@ public sealed class DocxExportService : IDocxExportService
         }
         else
         {
-            var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(lines, page.HeightPx) * 2))
-                .ToString();
-
             foreach (var paragraphLines in paragraphs)
             {
                 if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
                 {
-                    body.Append(BuildParagraph(paragraphLines, fontHalfPoints));
+                    body.Append(BuildParagraph(paragraphLines, page.HeightPx));
                     continue;
                 }
 
@@ -42,12 +39,12 @@ public sealed class DocxExportService : IDocxExportService
                 // kept in its own ordinary paragraph before/after the table, in original reading order.
                 var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
                 foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                    body.Append(BuildParagraph([line], fontHalfPoints));
+                    body.Append(BuildParagraph([line], page.HeightPx));
 
-                body.Append(BuildColumnsTable(left, right, page.WidthPx, fontHalfPoints));
+                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx));
 
                 foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                    body.Append(BuildParagraph([line], fontHalfPoints));
+                    body.Append(BuildParagraph([line], page.HeightPx));
             }
         }
 
@@ -64,8 +61,10 @@ public sealed class DocxExportService : IDocxExportService
         mainPart.Document.Save();
     }
 
-    private static Paragraph BuildParagraph(IReadOnlyList<ScannedLine> lines, string fontHalfPoints)
+    private static Paragraph BuildParagraph(IReadOnlyList<ScannedLine> lines, int pageHeightPx)
     {
+        var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(lines, pageHeightPx) * 2))
+            .ToString();
         var sentences = DocumentLineGrouping.JoinSentences(lines);
         var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
         for (var i = 0; i < sentences.Count; i++)
@@ -75,11 +74,16 @@ public sealed class DocxExportService : IDocxExportService
             run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
         }
 
-        return new Paragraph(run);
+        // Without this, Word's own default paragraph spacing (space-after ~8pt, ~1.08x line
+        // height) applies to every one of the dozens of paragraphs this produces — a source form
+        // set with no such spacing then needs noticeably more pages once reproduced with it.
+        var paragraphProperties = new ParagraphProperties(
+            new SpacingBetweenLines { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto });
+        return new Paragraph(paragraphProperties, run);
     }
 
     private static Table BuildColumnsTable(
-        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, string fontHalfPoints)
+        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, int pageHeightPx)
     {
         var usableWidthTwips = A4WidthTwips - 2 * MarginTwips;
 
@@ -104,16 +108,16 @@ public sealed class DocxExportService : IDocxExportService
                 new GridColumn { Width = leftWidthTwips.ToString() },
                 new GridColumn { Width = rightWidthTwips.ToString() }),
             new TableRow(
-                BuildCell(left, leftWidthTwips, fontHalfPoints),
-                BuildCell(right, rightWidthTwips, fontHalfPoints)));
+                BuildCell(left, leftWidthTwips, pageHeightPx),
+                BuildCell(right, rightWidthTwips, pageHeightPx)));
     }
 
-    private static TableCell BuildCell(List<ScannedLine> lines, int widthTwips, string fontHalfPoints)
+    private static TableCell BuildCell(List<ScannedLine> lines, int widthTwips, int pageHeightPx)
     {
         var cell = new TableCell(
             new TableCellProperties(
                 new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
-        cell.Append(BuildParagraph(lines, fontHalfPoints));
+        cell.Append(BuildParagraph(lines, pageHeightPx));
         return cell;
     }
 }

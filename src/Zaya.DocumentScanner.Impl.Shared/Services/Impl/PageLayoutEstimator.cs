@@ -13,15 +13,11 @@ public static class PageLayoutEstimator
     private const float A4HeightPoints = 841.89f;
 
     /// <summary>
-    /// An OCR word's bounding-box height covers roughly the cap-height/ascender span of the
-    /// glyphs, not the full nominal em-size a font size in points describes — this scales the
-    /// measured height back up to an approximate font size.
-    /// </summary>
-    private const float GlyphHeightToFontSizeRatio = 0.7f;
-
-    /// <summary>
     /// Assumes the scanned image height corresponds to an A4 sheet (210x297mm) photographed to
-    /// fill the frame — a real but declared approximation, not a detected page boundary.
+    /// fill the frame — a real but declared approximation, not a detected page boundary. Measured
+    /// against a real scan, treating OCR's glyph bounding-box height as directly proportional to
+    /// the nominal font size (no extra correction factor) matched the source document's actual
+    /// print size closely enough that adding one back only pushed sizes further off.
     /// </summary>
     public static float EstimateFontSizePoints(IReadOnlyList<ScannedLine> lines, int pageHeightPx)
     {
@@ -29,8 +25,11 @@ public static class PageLayoutEstimator
             return 11f;
 
         var pxToPt = A4HeightPoints / pageHeightPx;
-        var fontSize = MedianHeight(lines) * pxToPt / GlyphHeightToFontSizeRatio;
-        return Math.Clamp(fontSize, 8f, 16f);
+        var fontSize = MedianHeight(lines) * pxToPt;
+        // A wide upper bound: this is called per line/block, not once for the whole document, so
+        // a genuine heading several times taller than body text must stay distinguishable instead
+        // of being flattened to the same ceiling as every other large element.
+        return Math.Clamp(fontSize, 8f, 28f);
     }
 
     private static float MedianHeight(IReadOnlyList<ScannedLine> lines)
