@@ -27,8 +27,9 @@ public static class DocumentScannerSettingDescriptors
 
     public static readonly IReadOnlyList<SettingDescriptor> All =
     [
-        new StringSettingDescriptor(ProfileName, LocalizedString.Invariant(ProfileName))
+        new StringSettingDescriptor(ProfileName, LocalizedString.Invariant("Имя профиля"))
         {
+            Description = LocalizedString.Invariant("Название этого набора настроек — под ним он сохраняется на диск."),
             DefaultValue = SettingsConstants.EngineDefaults.ProfileName,
         },
 
