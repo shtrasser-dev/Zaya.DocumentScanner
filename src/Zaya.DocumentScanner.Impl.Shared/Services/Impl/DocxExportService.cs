@@ -31,17 +31,23 @@ public sealed class DocxExportService : IDocxExportService
 
             foreach (var paragraphLines in paragraphs)
             {
-                var sentences = DocumentLineGrouping.JoinSentences(paragraphLines);
-
-                var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
-                for (var i = 0; i < sentences.Count; i++)
+                if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
                 {
-                    if (i > 0)
-                        run.Append(new Break());
-                    run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
+                    body.Append(BuildParagraph(paragraphLines, fontHalfPoints));
+                    continue;
                 }
 
-                body.Append(new Paragraph(run));
+                // A letterhead-style block (e.g. clinic info left, patient info right) — render as
+                // a borderless two-cell table, with any line that didn't cleanly fit either column
+                // kept in its own ordinary paragraph before/after the table, in original reading order.
+                var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
+                foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
+                    body.Append(BuildParagraph([line], fontHalfPoints));
+
+                body.Append(BuildColumnsTable(left, right, page.WidthPx, fontHalfPoints));
+
+                foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
+                    body.Append(BuildParagraph([line], fontHalfPoints));
             }
         }
 
@@ -56,5 +62,58 @@ public sealed class DocxExportService : IDocxExportService
             }));
 
         mainPart.Document.Save();
+    }
+
+    private static Paragraph BuildParagraph(IReadOnlyList<ScannedLine> lines, string fontHalfPoints)
+    {
+        var sentences = DocumentLineGrouping.JoinSentences(lines);
+        var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
+        for (var i = 0; i < sentences.Count; i++)
+        {
+            if (i > 0)
+                run.Append(new Break());
+            run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
+        }
+
+        return new Paragraph(run);
+    }
+
+    private static Table BuildColumnsTable(
+        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, string fontHalfPoints)
+    {
+        var usableWidthTwips = A4WidthTwips - 2 * MarginTwips;
+
+        // Split the table at the midpoint of the gap between the two blocks, scaled from source
+        // pixels to document twips, so the columns keep roughly the same proportions as the scan.
+        var splitX = (left.Max(l => l.MaxX) + right.Min(l => l.MinX)) / 2.0;
+        var leftFraction = Math.Clamp(splitX / pageWidthPx, 0.15, 0.85);
+        var leftWidthTwips = (int)Math.Round(leftFraction * usableWidthTwips);
+        var rightWidthTwips = usableWidthTwips - leftWidthTwips;
+
+        return new Table(
+            new TableProperties(
+                new TableWidth { Width = usableWidthTwips.ToString(), Type = TableWidthUnitValues.Dxa },
+                new TableBorders(
+                    new TopBorder { Val = BorderValues.None },
+                    new LeftBorder { Val = BorderValues.None },
+                    new BottomBorder { Val = BorderValues.None },
+                    new RightBorder { Val = BorderValues.None },
+                    new InsideHorizontalBorder { Val = BorderValues.None },
+                    new InsideVerticalBorder { Val = BorderValues.None })),
+            new TableGrid(
+                new GridColumn { Width = leftWidthTwips.ToString() },
+                new GridColumn { Width = rightWidthTwips.ToString() }),
+            new TableRow(
+                BuildCell(left, leftWidthTwips, fontHalfPoints),
+                BuildCell(right, rightWidthTwips, fontHalfPoints)));
+    }
+
+    private static TableCell BuildCell(List<ScannedLine> lines, int widthTwips, string fontHalfPoints)
+    {
+        var cell = new TableCell(
+            new TableCellProperties(
+                new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
+        cell.Append(BuildParagraph(lines, fontHalfPoints));
+        return cell;
     }
 }
