@@ -4,8 +4,10 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.DependencyInjection;
 using Zaya.Logging.Services;
+using Zaya.DocumentScanner.Impl.Shared.Constants;
 using Zaya.DocumentScanner.Impl.Shared.DependencyInjection;
 using Zaya.DocumentScanner.Impl.Shared.Services;
+using Zaya.DocumentScanner.Impl.Shared.ViewModels;
 using Zaya.DocumentScanner.Impl.Shared.Views;
 
 namespace Zaya.DocumentScanner.Impl.Shared;
@@ -40,10 +42,15 @@ public partial class App : Application
         AppServiceRegistrar.Register(appServices, logging);
         _serviceProvider = appServices.BuildServiceProvider();
 
+        var profileService = _serviceProvider.GetRequiredService<IApplicationProfileService>();
+        profileService.SetActiveProfile(SettingsConstants.EngineDefaults.ProfileName);
+
         _mainWindow = new MainWindow(
             _serviceProvider.GetRequiredService<IDocumentScanService>(),
             _serviceProvider.GetRequiredService<IRawImageFileLoader>(),
-            _serviceProvider.GetRequiredService<IDocxExportService>());
+            _serviceProvider.GetRequiredService<IDocxExportService>(),
+            profileService,
+            _serviceProvider.GetRequiredService<SettingsViewModel>());
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

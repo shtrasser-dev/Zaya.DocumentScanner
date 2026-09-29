@@ -19,15 +19,26 @@ public sealed class DocumentScanService : IDocumentScanService
     public async Task<IReadOnlyList<ScannedLine>> ScanAsync(
         IRawImage page,
         DocumentScanOptions options,
+        IReadOnlyDictionary<string, object>? ocrSettings = null,
+        IReadOnlyDictionary<string, object>? textLayoutSettings = null,
         CancellationToken cancellationToken = default)
     {
         var windowHeight = options.WindowHeight ?? Math.Max(1, page.Height / 4);
         var inkThreshold = InkDensityEstimator.ComputePageInkThreshold(page);
 
-        using var ocrSession = await _ocr.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
-        using var layoutSession = await _layout.CreateSessionAsync(
-            new Dictionary<string, object> { ["wordGapThreshold"] = options.WordGapThresholdPercent },
-            cancellationToken).ConfigureAwait(false);
+        using var ocrSession = ocrSettings is { Count: > 0 }
+            ? await _ocr.CreateSessionAsync(ocrSettings, cancellationToken).ConfigureAwait(false)
+            : await _ocr.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        // The window-slide step splits genuinely wide gaps (label/value lists) unusually far
+        // apart, so scanning always needs its own wordGapThreshold regardless of whatever the
+        // user configured for the text-layout engine elsewhere — it wins over a user override.
+        var mergedTextLayoutSettings = textLayoutSettings is { Count: > 0 }
+            ? new Dictionary<string, object>(textLayoutSettings)
+            : [];
+        mergedTextLayoutSettings["wordGapThreshold"] = options.WordGapThresholdPercent;
+
+        using var layoutSession = await _layout.CreateSessionAsync(mergedTextLayoutSettings, cancellationToken).ConfigureAwait(false);
 
         var tracked = new Dictionary<Guid, TrackedLine>();
         var committed = new List<TrackedLine>();

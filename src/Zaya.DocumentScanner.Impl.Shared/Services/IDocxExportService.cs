@@ -5,5 +5,5 @@ namespace Zaya.DocumentScanner.Impl.Shared.Services;
 /// <summary>Writes scanned lines out as a .docx file, one Word paragraph per recognized paragraph.</summary>
 public interface IDocxExportService
 {
-    void Export(IReadOnlyList<ScannedLine> lines, PageMetrics page, string path);
+    void Export(IReadOnlyList<ScannedLine> lines, PageMetrics page, string path, DocxExportOptions? options = null);
 }

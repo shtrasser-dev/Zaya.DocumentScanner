@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Zaya.DocumentScanner.Impl.Shared.Services;
 using Zaya.DocumentScanner.Impl.Shared.Services.Impl;
+using Zaya.DocumentScanner.Impl.Shared.ViewModels;
 using Zaya.Logging.Services;
 using Zaya.OCR.Impl.OneOcr;
 using Zaya.OCR.Impl.ProximityTextLayout;
@@ -19,5 +20,11 @@ public static class AppServiceRegistrar
         services.AddSingleton<IDocumentScanService, DocumentScanService>();
         services.AddSingleton<IRawImageFileLoader, RawImageFileLoader>();
         services.AddSingleton<IDocxExportService, DocxExportService>();
+
+        services.AddSingleton<IJsonConfigurationService, JsonConfigurationService>();
+        services.AddSingleton<IConfigurationPathService, ConfigurationPathService>();
+        services.AddSingleton<IApplicationProfileService, ApplicationProfileService>();
+        services.AddSingleton<ISettingsService, SettingsService>();
+        services.AddSingleton<SettingsViewModel>();
     }
 }

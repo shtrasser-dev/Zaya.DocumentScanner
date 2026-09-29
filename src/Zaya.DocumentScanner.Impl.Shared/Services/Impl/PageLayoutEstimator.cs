@@ -19,7 +19,8 @@ public static class PageLayoutEstimator
     /// the nominal font size (no extra correction factor) matched the source document's actual
     /// print size closely enough that adding one back only pushed sizes further off.
     /// </summary>
-    public static float EstimateFontSizePoints(IReadOnlyList<ScannedLine> lines, int pageHeightPx)
+    public static float EstimateFontSizePoints(
+        IReadOnlyList<ScannedLine> lines, int pageHeightPx, float minPt = 8f, float maxPt = 28f)
     {
         if (lines.Count == 0 || pageHeightPx <= 0)
             return 11f;
@@ -29,7 +30,7 @@ public static class PageLayoutEstimator
         // A wide upper bound: this is called per line/block, not once for the whole document, so
         // a genuine heading several times taller than body text must stay distinguishable instead
         // of being flattened to the same ceiling as every other large element.
-        return Math.Clamp(fontSize, 8f, 28f);
+        return Math.Clamp(fontSize, minPt, maxPt);
     }
 
     /// <summary>

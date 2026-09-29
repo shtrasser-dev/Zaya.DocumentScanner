@@ -1,0 +1,47 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Zaya.DocumentScanner.Impl.Shared.ViewModels"
+             xmlns:ui="clr-namespace:Zaya.UI.Impl.Controls;assembly=Zaya.UI.Impl"
+             x:Class="Zaya.DocumentScanner.Impl.Shared.Views.SettingsPanel"
+             x:DataType="vm:SettingsViewModel">
+    <Border Background="#F2F2F2"
+            BorderBrush="Gray"
+            BorderThickness="0,1,0,0"
+            Padding="12"
+            MaxHeight="420">
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Bottom"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Spacing="8"
+                        Margin="0,10,0,0">
+                <Button Content="Отмена" Command="{Binding CancelCommand}" />
+                <Button Content="Сохранить" Command="{Binding SaveCommand}" />
+            </StackPanel>
+
+            <TabControl>
+                <TabItem Header="Сканирование">
+                    <ScrollViewer>
+                        <ui:SettingDescriptorListControl
+                            Descriptors="{Binding DocumentScannerDescriptors}"
+                            Values="{Binding DocumentScannerValues}" />
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="OCR">
+                    <ScrollViewer>
+                        <ui:SettingDescriptorListControl
+                            Descriptors="{Binding OcrDescriptors}"
+                            Values="{Binding OcrValues}" />
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Разметка текста">
+                    <ScrollViewer>
+                        <ui:SettingDescriptorListControl
+                            Descriptors="{Binding TextLayoutDescriptors}"
+                            Values="{Binding TextLayoutValues}" />
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+        </DockPanel>
+    </Border>
+</UserControl>

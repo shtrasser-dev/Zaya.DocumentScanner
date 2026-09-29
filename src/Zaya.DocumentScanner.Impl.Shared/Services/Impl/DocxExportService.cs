@@ -1,26 +1,24 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using Zaya.DocumentScanner.Impl.Shared.Constants;
 using Zaya.DocumentScanner.Impl.Shared.Models;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 
 public sealed class DocxExportService : IDocxExportService
 {
-    // A4 in twips (1/20 pt): 210x297mm. Word's own default margins (1 inch = 1440 twips).
+    // Twips (1/20 pt). Word's own default margins (1 inch = 1440 twips).
     private const int A4WidthTwips = 11906;
     private const int A4HeightTwips = 16838;
+    private const int LetterWidthTwips = 12240;
+    private const int LetterHeightTwips = 15840;
     private const int MarginTwips = 1440;
 
-    // Whole-word ink density reliably flags real bold labels (e.g. "Пол:"), but for short/numeric
-    // tokens (measurements, lab values) its false-positive rate is high enough that true-bold and
-    // false-positive words measure in fully overlapping, sometimes inverted ranges — no threshold
-    // fixes that. Off for now; the detection/rendering code stays in place for when a better
-    // per-word signal (e.g. stroke-width via image morphology) is worth building.
-    private const bool BoldDetectionEnabled = false;
-
-    public void Export(IReadOnlyList<ScannedLine> lines, PageMetrics page, string path)
+    public void Export(IReadOnlyList<ScannedLine> lines, PageMetrics page, string path, DocxExportOptions? options = null)
     {
+        options ??= new DocxExportOptions();
+
         using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
         var mainPart = document.AddMainDocumentPart();
         mainPart.Document = new Document();
@@ -35,14 +33,14 @@ public sealed class DocxExportService : IDocxExportService
         {
             var leftMargin = PageLayoutEstimator.EstimateLeftMargin(lines);
             var rightMargin = PageLayoutEstimator.EstimateRightMargin(lines);
-            var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * 2.5f;
+            var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * (options.LayoutTolerancePercent / 100f);
             var boldThreshold = PageLayoutEstimator.EstimateBoldDensityThreshold(lines);
 
             foreach (var paragraphLines in paragraphs)
             {
                 if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
                 {
-                    AppendAlignedParagraphs(body, paragraphLines, page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold);
+                    AppendAlignedParagraphs(body, paragraphLines, page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold, options);
                     continue;
                 }
 
@@ -51,17 +49,21 @@ public sealed class DocxExportService : IDocxExportService
                 // kept in its own ordinary paragraph before/after the table, in original reading order.
                 var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
                 foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold);
+                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold, options);
 
-                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx, rightMargin, tolerance, boldThreshold));
+                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx, rightMargin, tolerance, boldThreshold, options));
 
                 foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold);
+                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance, boldThreshold, options);
             }
         }
 
+        var (pageWidthTwips, pageHeightTwips) = options.PageSize == SettingsConstants.PageSizeLetter
+            ? (LetterWidthTwips, LetterHeightTwips)
+            : (A4WidthTwips, A4HeightTwips);
+
         body.Append(new SectionProperties(
-            new PageSize { Width = A4WidthTwips, Height = A4HeightTwips },
+            new PageSize { Width = (UInt32Value)(uint)pageWidthTwips, Height = (UInt32Value)(uint)pageHeightTwips },
             new PageMargin
             {
                 Top = MarginTwips,
@@ -79,17 +81,19 @@ public sealed class DocxExportService : IDocxExportService
     /// </summary>
     private static void AppendAlignedParagraphs(
         Body body, IReadOnlyList<ScannedLine> groupLines, int pageHeightPx,
-        float leftMargin, float rightMargin, float tolerance, double boldThreshold)
+        float leftMargin, float rightMargin, float tolerance, double boldThreshold, DocxExportOptions options)
     {
         foreach (var (alignment, units) in DocumentLineGrouping.SplitByAlignment(groupLines, leftMargin, rightMargin, tolerance))
-            body.Append(BuildParagraph(units, pageHeightPx, alignment, boldThreshold));
+            body.Append(BuildParagraph(units, pageHeightPx, alignment, boldThreshold, options));
     }
 
     private static Paragraph BuildParagraph(
-        List<DocumentLineGrouping.SentenceUnit> units, int pageHeightPx, LineAlignment alignment, double boldThreshold)
+        List<DocumentLineGrouping.SentenceUnit> units, int pageHeightPx, LineAlignment alignment,
+        double boldThreshold, DocxExportOptions options)
     {
         var allLines = units.SelectMany(u => u.Lines).ToList();
-        var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(allLines, pageHeightPx) * 2))
+        var fontHalfPoints = (Math.Round(
+                PageLayoutEstimator.EstimateFontSizePoints(allLines, pageHeightPx, options.FontSizeMinPt, options.FontSizeMaxPt) * 2))
             .ToString();
 
         var paragraphProperties = new ParagraphProperties(
@@ -126,7 +130,7 @@ public sealed class DocxExportService : IDocxExportService
             {
                 foreach (var word in line.Words)
                 {
-                    var isBold = BoldDetectionEnabled && word.InkDensity >= boldThreshold;
+                    var isBold = options.BoldDetectionEnabled && word.InkDensity >= boldThreshold;
                     words.Add((word.Text, isBold, isFirstWordOfUnit && words.Count > 0));
                     isFirstWordOfUnit = false;
                 }
@@ -142,8 +146,8 @@ public sealed class DocxExportService : IDocxExportService
             if (run is null || isBold != runIsBold)
             {
                 var runProperties = isBold
-                    ? new RunProperties(new Bold(), new FontSize { Val = fontHalfPoints })
-                    : new RunProperties(new FontSize { Val = fontHalfPoints });
+                    ? new RunProperties(new RunFonts { Ascii = options.FontFamily, HighAnsi = options.FontFamily, ComplexScript = options.FontFamily }, new Bold(), new FontSize { Val = fontHalfPoints })
+                    : new RunProperties(new RunFonts { Ascii = options.FontFamily, HighAnsi = options.FontFamily, ComplexScript = options.FontFamily }, new FontSize { Val = fontHalfPoints });
                 run = new Run(runProperties);
                 paragraph.Append(run);
                 runIsBold = isBold;
@@ -164,9 +168,10 @@ public sealed class DocxExportService : IDocxExportService
 
     private static Table BuildColumnsTable(
         List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, int pageHeightPx,
-        float rightMargin, float rightMarginTolerance, double boldThreshold)
+        float rightMargin, float rightMarginTolerance, double boldThreshold, DocxExportOptions options)
     {
-        var usableWidthTwips = A4WidthTwips - 2 * MarginTwips;
+        var pageWidthTwips = options.PageSize == SettingsConstants.PageSizeLetter ? LetterWidthTwips : A4WidthTwips;
+        var usableWidthTwips = pageWidthTwips - 2 * MarginTwips;
 
         // Split the table at the midpoint of the gap between the two blocks, scaled from source
         // pixels to document twips, so the columns keep roughly the same proportions as the scan.
@@ -189,19 +194,19 @@ public sealed class DocxExportService : IDocxExportService
                 new GridColumn { Width = leftWidthTwips.ToString() },
                 new GridColumn { Width = rightWidthTwips.ToString() }),
             new TableRow(
-                BuildCell(left, leftWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance, boldThreshold),
-                BuildCell(right, rightWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance, boldThreshold)));
+                BuildCell(left, leftWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance, boldThreshold, options),
+                BuildCell(right, rightWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance, boldThreshold, options)));
     }
 
     private static TableCell BuildCell(
         List<ScannedLine> lines, int widthTwips, int pageHeightPx, float rightMargin, float rightMarginTolerance,
-        double boldThreshold)
+        double boldThreshold, DocxExportOptions options)
     {
         var units = DocumentLineGrouping.SplitIntoSentenceUnits(lines, rightMargin, rightMarginTolerance);
         var cell = new TableCell(
             new TableCellProperties(
                 new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
-        cell.Append(BuildParagraph(units, pageHeightPx, LineAlignment.Left, boldThreshold));
+        cell.Append(BuildParagraph(units, pageHeightPx, LineAlignment.Left, boldThreshold, options));
         return cell;
     }
 }

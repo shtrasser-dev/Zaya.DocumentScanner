@@ -12,5 +12,7 @@ public interface IDocumentScanService
     Task<IReadOnlyList<ScannedLine>> ScanAsync(
         IRawImage page,
         DocumentScanOptions options,
+        IReadOnlyDictionary<string, object>? ocrSettings = null,
+        IReadOnlyDictionary<string, object>? textLayoutSettings = null,
         CancellationToken cancellationToken = default);
 }
