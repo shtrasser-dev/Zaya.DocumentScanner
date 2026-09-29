@@ -24,7 +24,9 @@ public sealed class DocumentScanService : IDocumentScanService
         var windowHeight = options.WindowHeight ?? Math.Max(1, page.Height / 4);
 
         using var ocrSession = await _ocr.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
-        using var layoutSession = await _layout.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        using var layoutSession = await _layout.CreateSessionAsync(
+            new Dictionary<string, object> { ["wordGapThreshold"] = options.WordGapThresholdPercent },
+            cancellationToken).ConfigureAwait(false);
 
         var tracked = new Dictionary<Guid, TrackedLine>();
         var committed = new List<TrackedLine>();

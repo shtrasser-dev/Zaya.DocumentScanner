@@ -21,4 +21,12 @@ public sealed class DocumentScanOptions
 
     /// <summary>Consecutive frames a line may be absent before it's treated as scrolled out of view.</summary>
     public int MissingFrameGrace { get; init; } = 3;
+
+    /// <summary>
+    /// Max horizontal gap (percent of line height) the layout engine bridges when merging words
+    /// into one line. The default (50) is tuned for on-screen text; scanned documents can have
+    /// wider clause-to-clause gaps within a single printed line (e.g. label/value lists), which
+    /// at the default split into separate, misordered fragments instead of one line.
+    /// </summary>
+    public int WordGapThresholdPercent { get; init; } = 150;
 }
