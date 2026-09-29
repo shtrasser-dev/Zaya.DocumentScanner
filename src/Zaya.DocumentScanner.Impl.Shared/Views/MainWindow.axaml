@@ -3,7 +3,8 @@
         xmlns:views="clr-namespace:Zaya.DocumentScanner.Impl.Shared.Views"
         x:Class="Zaya.DocumentScanner.Impl.Shared.Views.MainWindow"
         Title="Zaya Document Scanner"
-        Width="900" Height="700">
+        Width="900" Height="700" MinHeight="0"
+        SizeToContent="Height">
     <DockPanel>
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="12,12,12,8">
             <Button Name="ScanButton" Content="Открыть и распознать..." Click="OnScanClick" />
@@ -12,9 +13,13 @@
             <TextBlock Name="StatusText" VerticalAlignment="Center" />
         </StackPanel>
 
+        <!-- SizeToContent="Height" above means this panel appearing/disappearing grows or shrinks
+             the window itself, instead of squeezing ResultText's fixed height like a DockPanel
+             "fill" region would — same approach ScreenTranslator's MainWindow uses. -->
         <views:SettingsPanel Name="SettingsPanelControl" DockPanel.Dock="Bottom" IsVisible="False" />
 
         <TextBox Name="ResultText"
+                 Height="420"
                  Margin="12,0,12,12"
                  IsReadOnly="True"
                  AcceptsReturn="True"
