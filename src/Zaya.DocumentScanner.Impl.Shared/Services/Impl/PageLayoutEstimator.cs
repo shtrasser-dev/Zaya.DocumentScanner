@@ -19,14 +19,6 @@ public static class PageLayoutEstimator
     /// </summary>
     private const float GlyphHeightToFontSizeRatio = 0.7f;
 
-    public static (float Left, float Right, float Tolerance) DocumentMargins(IReadOnlyList<ScannedLine> lines)
-    {
-        var left = Percentile(lines.Select(l => l.MinX).OrderBy(v => v).ToList(), 0.1f);
-        var right = Percentile(lines.Select(l => l.MaxX).OrderBy(v => v).ToList(), 0.9f);
-        var tolerance = MedianHeight(lines) * 2.5f;
-        return (left, right, tolerance);
-    }
-
     /// <summary>
     /// Assumes the scanned image height corresponds to an A4 sheet (210x297mm) photographed to
     /// fill the frame — a real but declared approximation, not a detected page boundary.
@@ -45,14 +37,5 @@ public static class PageLayoutEstimator
     {
         var heights = lines.Select(l => l.Height).Where(h => h > 0).ToList();
         return heights.Count > 0 ? MathHelpers.Median(heights) : 20f;
-    }
-
-    private static float Percentile(List<float> sortedValues, float percentile)
-    {
-        if (sortedValues.Count == 0)
-            return 0f;
-
-        var index = (int)Math.Clamp(percentile * (sortedValues.Count - 1), 0, sortedValues.Count - 1);
-        return sortedValues[index];
     }
 }

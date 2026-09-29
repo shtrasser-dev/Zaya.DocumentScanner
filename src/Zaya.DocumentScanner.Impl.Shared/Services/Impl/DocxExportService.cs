@@ -26,29 +26,22 @@ public sealed class DocxExportService : IDocxExportService
         }
         else
         {
-            var (leftMargin, rightMargin, tolerance) = PageLayoutEstimator.DocumentMargins(lines);
             var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(lines, page.HeightPx) * 2))
                 .ToString();
 
             foreach (var paragraphLines in paragraphs)
             {
-                var runs = DocumentLineGrouping.SplitByAlignment(paragraphLines, leftMargin, rightMargin, tolerance);
-                foreach (var (alignment, alignedLines) in runs)
+                var sentences = DocumentLineGrouping.JoinSentences(paragraphLines);
+
+                var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
+                for (var i = 0; i < sentences.Count; i++)
                 {
-                    var sentences = DocumentLineGrouping.JoinSentences(alignedLines);
-
-                    var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
-                    for (var i = 0; i < sentences.Count; i++)
-                    {
-                        if (i > 0)
-                            run.Append(new Break());
-                        run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
-                    }
-
-                    var paragraphProperties = new ParagraphProperties(
-                        new Justification { Val = ToJustification(alignment) });
-                    body.Append(new Paragraph(paragraphProperties, run));
+                    if (i > 0)
+                        run.Append(new Break());
+                    run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
                 }
+
+                body.Append(new Paragraph(run));
             }
         }
 
@@ -64,11 +57,4 @@ public sealed class DocxExportService : IDocxExportService
 
         mainPart.Document.Save();
     }
-
-    private static JustificationValues ToJustification(LineAlignment alignment) => alignment switch
-    {
-        LineAlignment.Center => JustificationValues.Center,
-        LineAlignment.Right => JustificationValues.Right,
-        _ => JustificationValues.Left,
-    };
 }
