@@ -32,6 +32,24 @@ public static class PageLayoutEstimator
         return Math.Clamp(fontSize, 8f, 28f);
     }
 
+    /// <summary>
+    /// A high percentile (not the max) of every line's right edge, robust to the occasional line
+    /// that overruns into the margin — used to tell a genuinely word-wrapped line (one that runs
+    /// all the way out to this edge) from a short line that just happens not to end in a period.
+    /// </summary>
+    public static float EstimateRightMargin(IReadOnlyList<ScannedLine> lines)
+    {
+        if (lines.Count == 0)
+            return 0f;
+
+        var sorted = lines.Select(l => l.MaxX).OrderBy(v => v).ToList();
+        var index = (int)Math.Clamp(0.9f * (sorted.Count - 1), 0, sorted.Count - 1);
+        return sorted[index];
+    }
+
+    /// <summary>Typical (median) line height in px, for scaling other layout tolerances.</summary>
+    public static float EstimateTypicalHeight(IReadOnlyList<ScannedLine> lines) => MedianHeight(lines);
+
     private static float MedianHeight(IReadOnlyList<ScannedLine> lines)
     {
         var heights = lines.Select(l => l.Height).Where(h => h > 0).ToList();

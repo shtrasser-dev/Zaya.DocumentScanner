@@ -31,22 +31,30 @@ public static class DocumentLineGrouping
 
     /// <summary>
     /// Merges word-wrapped sentence fragments within a paragraph: when a line doesn't end with
-    /// a period and the next line starts with a lowercase letter, the scan's line width — not
-    /// the source document — is what broke the sentence there, so the two are joined with a
-    /// space instead of kept as a hard break (e.g. a label/value block like "Пол: Мужской" /
-    /// "Дата рождения: ..." stays split, since each starts with a capital).
+    /// a period, the next line starts with a lowercase letter, AND the line actually runs out to
+    /// the page's right margin, the scan's line width — not the source document — is what broke
+    /// the sentence there, so the two are joined with a space instead of kept as a hard break
+    /// (e.g. a label/value block like "Пол: Мужской" / "Дата рождения: ..." stays split, since
+    /// each starts with a capital). The margin check matters on its own too: a short line — e.g.
+    /// each line of a bulleted list, which often starts with a lowercase word right after the
+    /// bullet and has no reason to end in a period — must not be merged into its neighbor just
+    /// because it falls short of a full sentence; only a line that actually reached the margin
+    /// was plausibly cut off by the page width rather than ending on its own.
     /// </summary>
-    public static List<string> JoinSentences(IReadOnlyList<ScannedLine> group)
+    public static List<string> JoinSentences(
+        IReadOnlyList<ScannedLine> group, float rightMargin, float rightMarginTolerance)
     {
         var result = new List<string>();
         var current = group[0].Text;
+        var lastLine = group[0];
 
         for (var i = 1; i < group.Count; i++)
         {
             var prevEndsSentence = current.TrimEnd().EndsWith('.');
             var nextStartsLower = TryGetFirstLetter(group[i].Text, out var firstLetter) && char.IsLower(firstLetter);
+            var prevReachesRightMargin = lastLine.MaxX >= rightMargin - rightMarginTolerance;
 
-            if (!prevEndsSentence && nextStartsLower)
+            if (!prevEndsSentence && nextStartsLower && prevReachesRightMargin)
             {
                 current = current.TrimEnd() + " " + group[i].Text.TrimStart();
             }
@@ -55,6 +63,8 @@ public static class DocumentLineGrouping
                 result.Add(current);
                 current = group[i].Text;
             }
+
+            lastLine = group[i];
         }
 
         result.Add(current);

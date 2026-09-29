@@ -26,11 +26,14 @@ public sealed class DocxExportService : IDocxExportService
         }
         else
         {
+            var rightMargin = PageLayoutEstimator.EstimateRightMargin(lines);
+            var rightMarginTolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * 2.5f;
+
             foreach (var paragraphLines in paragraphs)
             {
                 if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
                 {
-                    body.Append(BuildParagraph(paragraphLines, page.HeightPx));
+                    body.Append(BuildParagraph(paragraphLines, page.HeightPx, rightMargin, rightMarginTolerance));
                     continue;
                 }
 
@@ -39,12 +42,12 @@ public sealed class DocxExportService : IDocxExportService
                 // kept in its own ordinary paragraph before/after the table, in original reading order.
                 var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
                 foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                    body.Append(BuildParagraph([line], page.HeightPx));
+                    body.Append(BuildParagraph([line], page.HeightPx, rightMargin, rightMarginTolerance));
 
-                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx));
+                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx, rightMargin, rightMarginTolerance));
 
                 foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                    body.Append(BuildParagraph([line], page.HeightPx));
+                    body.Append(BuildParagraph([line], page.HeightPx, rightMargin, rightMarginTolerance));
             }
         }
 
@@ -61,11 +64,12 @@ public sealed class DocxExportService : IDocxExportService
         mainPart.Document.Save();
     }
 
-    private static Paragraph BuildParagraph(IReadOnlyList<ScannedLine> lines, int pageHeightPx)
+    private static Paragraph BuildParagraph(
+        IReadOnlyList<ScannedLine> lines, int pageHeightPx, float rightMargin, float rightMarginTolerance)
     {
         var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(lines, pageHeightPx) * 2))
             .ToString();
-        var sentences = DocumentLineGrouping.JoinSentences(lines);
+        var sentences = DocumentLineGrouping.JoinSentences(lines, rightMargin, rightMarginTolerance);
         var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
         for (var i = 0; i < sentences.Count; i++)
         {
@@ -83,7 +87,8 @@ public sealed class DocxExportService : IDocxExportService
     }
 
     private static Table BuildColumnsTable(
-        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, int pageHeightPx)
+        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, int pageHeightPx,
+        float rightMargin, float rightMarginTolerance)
     {
         var usableWidthTwips = A4WidthTwips - 2 * MarginTwips;
 
@@ -108,16 +113,17 @@ public sealed class DocxExportService : IDocxExportService
                 new GridColumn { Width = leftWidthTwips.ToString() },
                 new GridColumn { Width = rightWidthTwips.ToString() }),
             new TableRow(
-                BuildCell(left, leftWidthTwips, pageHeightPx),
-                BuildCell(right, rightWidthTwips, pageHeightPx)));
+                BuildCell(left, leftWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance),
+                BuildCell(right, rightWidthTwips, pageHeightPx, rightMargin, rightMarginTolerance)));
     }
 
-    private static TableCell BuildCell(List<ScannedLine> lines, int widthTwips, int pageHeightPx)
+    private static TableCell BuildCell(
+        List<ScannedLine> lines, int widthTwips, int pageHeightPx, float rightMargin, float rightMarginTolerance)
     {
         var cell = new TableCell(
             new TableCellProperties(
                 new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
-        cell.Append(BuildParagraph(lines, pageHeightPx));
+        cell.Append(BuildParagraph(lines, pageHeightPx, rightMargin, rightMarginTolerance));
         return cell;
     }
 }
