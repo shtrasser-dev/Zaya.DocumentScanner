@@ -26,14 +26,15 @@ public sealed class DocxExportService : IDocxExportService
         }
         else
         {
+            var leftMargin = PageLayoutEstimator.EstimateLeftMargin(lines);
             var rightMargin = PageLayoutEstimator.EstimateRightMargin(lines);
-            var rightMarginTolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * 2.5f;
+            var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * 2.5f;
 
             foreach (var paragraphLines in paragraphs)
             {
                 if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
                 {
-                    body.Append(BuildParagraph(paragraphLines, page.HeightPx, rightMargin, rightMarginTolerance));
+                    AppendAlignedParagraphs(body, paragraphLines, page.HeightPx, leftMargin, rightMargin, tolerance);
                     continue;
                 }
 
@@ -42,12 +43,12 @@ public sealed class DocxExportService : IDocxExportService
                 // kept in its own ordinary paragraph before/after the table, in original reading order.
                 var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
                 foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                    body.Append(BuildParagraph([line], page.HeightPx, rightMargin, rightMarginTolerance));
+                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance);
 
-                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx, rightMargin, rightMarginTolerance));
+                body.Append(BuildColumnsTable(left, right, page.WidthPx, page.HeightPx, rightMargin, tolerance));
 
                 foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                    body.Append(BuildParagraph([line], page.HeightPx, rightMargin, rightMarginTolerance));
+                    AppendAlignedParagraphs(body, [line], page.HeightPx, leftMargin, rightMargin, tolerance);
             }
         }
 
@@ -64,18 +65,31 @@ public sealed class DocxExportService : IDocxExportService
         mainPart.Document.Save();
     }
 
-    private static Paragraph BuildParagraph(
-        IReadOnlyList<ScannedLine> lines, int pageHeightPx, float rightMargin, float rightMarginTolerance)
+    /// <summary>
+    /// Splits a Y-gap paragraph group into alignment-consistent runs (e.g. a centered heading
+    /// followed by ordinary left-aligned body text) and appends one Word paragraph per run.
+    /// </summary>
+    private static void AppendAlignedParagraphs(
+        Body body, IReadOnlyList<ScannedLine> groupLines, int pageHeightPx,
+        float leftMargin, float rightMargin, float tolerance)
     {
-        var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(lines, pageHeightPx) * 2))
+        foreach (var (alignment, units) in DocumentLineGrouping.SplitByAlignment(groupLines, leftMargin, rightMargin, tolerance))
+            body.Append(BuildParagraph(units, pageHeightPx, alignment));
+    }
+
+    private static Paragraph BuildParagraph(
+        List<DocumentLineGrouping.SentenceUnit> units, int pageHeightPx, LineAlignment alignment)
+    {
+        var allLines = units.SelectMany(u => u.Lines).ToList();
+        var fontHalfPoints = (Math.Round(PageLayoutEstimator.EstimateFontSizePoints(allLines, pageHeightPx) * 2))
             .ToString();
-        var sentences = DocumentLineGrouping.JoinSentences(lines, rightMargin, rightMarginTolerance);
+
         var run = new Run(new RunProperties(new FontSize { Val = fontHalfPoints }));
-        for (var i = 0; i < sentences.Count; i++)
+        for (var i = 0; i < units.Count; i++)
         {
             if (i > 0)
                 run.Append(new Break());
-            run.Append(new Text(sentences[i]) { Space = SpaceProcessingModeValues.Preserve });
+            run.Append(new Text(units[i].Text) { Space = SpaceProcessingModeValues.Preserve });
         }
 
         // Without this, Word's own default paragraph spacing (space-after ~8pt, ~1.08x line
@@ -83,6 +97,15 @@ public sealed class DocxExportService : IDocxExportService
         // set with no such spacing then needs noticeably more pages once reproduced with it.
         var paragraphProperties = new ParagraphProperties(
             new SpacingBetweenLines { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto });
+
+        if (alignment != LineAlignment.Left)
+        {
+            paragraphProperties.Append(new Justification
+            {
+                Val = alignment == LineAlignment.Center ? JustificationValues.Center : JustificationValues.Right,
+            });
+        }
+
         return new Paragraph(paragraphProperties, run);
     }
 
@@ -120,10 +143,11 @@ public sealed class DocxExportService : IDocxExportService
     private static TableCell BuildCell(
         List<ScannedLine> lines, int widthTwips, int pageHeightPx, float rightMargin, float rightMarginTolerance)
     {
+        var units = DocumentLineGrouping.SplitIntoSentenceUnits(lines, rightMargin, rightMarginTolerance);
         var cell = new TableCell(
             new TableCellProperties(
                 new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
-        cell.Append(BuildParagraph(lines, pageHeightPx, rightMargin, rightMarginTolerance));
+        cell.Append(BuildParagraph(units, pageHeightPx, LineAlignment.Left));
         return cell;
     }
 }

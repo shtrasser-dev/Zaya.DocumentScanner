@@ -47,6 +47,17 @@ public static class PageLayoutEstimator
         return sorted[index];
     }
 
+    /// <summary>Mirror of <see cref="EstimateRightMargin"/> for the left edge (low percentile).</summary>
+    public static float EstimateLeftMargin(IReadOnlyList<ScannedLine> lines)
+    {
+        if (lines.Count == 0)
+            return 0f;
+
+        var sorted = lines.Select(l => l.MinX).OrderBy(v => v).ToList();
+        var index = (int)Math.Clamp(0.1f * (sorted.Count - 1), 0, sorted.Count - 1);
+        return sorted[index];
+    }
+
     /// <summary>Typical (median) line height in px, for scaling other layout tolerances.</summary>
     public static float EstimateTypicalHeight(IReadOnlyList<ScannedLine> lines) => MedianHeight(lines);
 

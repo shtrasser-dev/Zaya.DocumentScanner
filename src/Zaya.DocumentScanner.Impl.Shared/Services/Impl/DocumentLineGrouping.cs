@@ -29,6 +29,9 @@ public static class DocumentLineGrouping
         return groups;
     }
 
+    /// <summary>One or more scanned lines merged into a single flowing sentence (see <see cref="SplitIntoSentenceUnits"/>).</summary>
+    public sealed record SentenceUnit(string Text, IReadOnlyList<ScannedLine> Lines);
+
     /// <summary>
     /// Merges word-wrapped sentence fragments within a paragraph: when a line doesn't end with
     /// a period, the next line starts with a lowercase letter, AND the line actually runs out to
@@ -41,34 +44,66 @@ public static class DocumentLineGrouping
     /// because it falls short of a full sentence; only a line that actually reached the margin
     /// was plausibly cut off by the page width rather than ending on its own.
     /// </summary>
-    public static List<string> JoinSentences(
+    public static List<SentenceUnit> SplitIntoSentenceUnits(
         IReadOnlyList<ScannedLine> group, float rightMargin, float rightMarginTolerance)
     {
-        var result = new List<string>();
-        var current = group[0].Text;
+        var result = new List<SentenceUnit>();
+        var currentText = group[0].Text;
+        var currentLines = new List<ScannedLine> { group[0] };
         var lastLine = group[0];
 
         for (var i = 1; i < group.Count; i++)
         {
-            var prevEndsSentence = current.TrimEnd().EndsWith('.');
+            var prevEndsSentence = currentText.TrimEnd().EndsWith('.');
             var nextStartsLower = TryGetFirstLetter(group[i].Text, out var firstLetter) && char.IsLower(firstLetter);
             var prevReachesRightMargin = lastLine.MaxX >= rightMargin - rightMarginTolerance;
 
             if (!prevEndsSentence && nextStartsLower && prevReachesRightMargin)
             {
-                current = current.TrimEnd() + " " + group[i].Text.TrimStart();
+                currentText = currentText.TrimEnd() + " " + group[i].Text.TrimStart();
+                currentLines.Add(group[i]);
             }
             else
             {
-                result.Add(current);
-                current = group[i].Text;
+                result.Add(new SentenceUnit(currentText, currentLines));
+                currentText = group[i].Text;
+                currentLines = [group[i]];
             }
 
             lastLine = group[i];
         }
 
-        result.Add(current);
+        result.Add(new SentenceUnit(currentText, currentLines));
         return result;
+    }
+
+    /// <summary>Text-only view of <see cref="SplitIntoSentenceUnits"/>, for plain-text output which has no use for alignment.</summary>
+    public static List<string> JoinSentences(
+        IReadOnlyList<ScannedLine> group, float rightMargin, float rightMarginTolerance)
+        => SplitIntoSentenceUnits(group, rightMargin, rightMarginTolerance).Select(u => u.Text).ToList();
+
+    /// <summary>
+    /// Splits a paragraph-sized group into runs of consecutive sentence units that share the same
+    /// alignment (see <see cref="ClassifyAlignment"/>), each destined for its own Word paragraph —
+    /// a centered one-line heading followed by ordinary left-aligned body text becomes two runs,
+    /// rather than one paragraph whose alignment is decided by the group as a whole (which would
+    /// almost always come out Left, since the group's combined extent touches the left margin).
+    /// </summary>
+    public static List<(LineAlignment Alignment, List<SentenceUnit> Units)> SplitByAlignment(
+        IReadOnlyList<ScannedLine> group, float leftMargin, float rightMargin, float tolerance)
+    {
+        var units = SplitIntoSentenceUnits(group, rightMargin, tolerance);
+        var runs = new List<(LineAlignment Alignment, List<SentenceUnit> Units)>();
+        foreach (var unit in units)
+        {
+            var alignment = ClassifyAlignment(unit.Lines, leftMargin, rightMargin, tolerance);
+            if (runs.Count > 0 && runs[^1].Alignment == alignment)
+                runs[^1].Units.Add(unit);
+            else
+                runs.Add((alignment, [unit]));
+        }
+
+        return runs;
     }
 
     /// <summary>
@@ -148,6 +183,36 @@ public static class DocumentLineGrouping
         right = Enumerable.Range(0, group.Count).Where(rightIdx.Contains).Select(i => group[i]).ToList();
         ambiguous = Enumerable.Range(0, group.Count).Where(ambiguousIdx.Contains).Select(i => group[i]).ToList();
         return true;
+    }
+
+    /// <summary>
+    /// Classifies one sentence unit's alignment (usually a single line, occasionally several
+    /// merged by word-wrap — see <see cref="SplitIntoSentenceUnits"/>) by comparing its own extent
+    /// against the document's overall text margins. Left/Right when it touches the corresponding
+    /// margin; Center only when it sits clear of BOTH margins with its own midpoint close to the
+    /// document's midpoint — not just "closer to center than to either edge", since that's a much
+    /// weaker (and easily false-positive-prone) test.
+    /// </summary>
+    public static LineAlignment ClassifyAlignment(
+        IReadOnlyList<ScannedLine> unit, float documentLeftMargin, float documentRightMargin, float tolerance)
+    {
+        var minX = unit.Min(l => l.MinX);
+        var maxX = unit.Max(l => l.MaxX);
+        var leftGap = minX - documentLeftMargin;
+        var rightGap = documentRightMargin - maxX;
+
+        if (leftGap <= tolerance)
+            return LineAlignment.Left;
+
+        if (rightGap <= tolerance)
+            return LineAlignment.Right;
+
+        var center = (minX + maxX) / 2f;
+        var documentCenter = (documentLeftMargin + documentRightMargin) / 2f;
+        if (Math.Abs(center - documentCenter) <= tolerance)
+            return LineAlignment.Center;
+
+        return LineAlignment.Left;
     }
 
     public static float TypicalGap(IReadOnlyList<ScannedLine> lines)
