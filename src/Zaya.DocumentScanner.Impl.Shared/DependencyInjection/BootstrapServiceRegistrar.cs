@@ -10,9 +10,14 @@ namespace Zaya.DocumentScanner.Impl.Shared.DependencyInjection;
 
 public static class BootstrapServiceRegistrar
 {
-    public static void Register(IServiceCollection services)
+    public static void Register(IServiceCollection services, string? logFilePath = null)
     {
-        services.AddLogging(builder => builder.AddDebug());
+        services.AddLogging(builder =>
+        {
+            builder.AddDebug();
+            if (!string.IsNullOrWhiteSpace(logFilePath))
+                builder.AddProvider(new FileLoggerProvider(logFilePath));
+        });
 
         services.AddSingleton<ILoggingWrapper>(sp =>
         {
