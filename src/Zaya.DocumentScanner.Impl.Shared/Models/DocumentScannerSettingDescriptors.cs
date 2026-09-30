@@ -22,6 +22,7 @@ public static class DocumentScannerSettingDescriptors
     public const string FontSizeMinPt = SettingsConstants.FontSizeMinPt;
     public const string FontSizeMaxPt = SettingsConstants.FontSizeMaxPt;
     public const string PageSize = SettingsConstants.PageSize;
+    public const string PageMarginMm = SettingsConstants.PageMarginMm;
     public const string DocxFontFamily = SettingsConstants.DocxFontFamily;
     public const string BoldDetectionEnabled = SettingsConstants.BoldDetectionEnabled;
 
@@ -99,6 +100,17 @@ public static class DocumentScannerSettingDescriptors
                 new EnumOption(SettingsConstants.PageSizeA4, LocalizedString.Invariant("A4")),
                 new EnumOption(SettingsConstants.PageSizeLetter, LocalizedString.Invariant("Letter")),
             ],
+        },
+        new IntegerSettingDescriptor(PageMarginMm, LocalizedString.Invariant("Поля листа (мм)"))
+        {
+            Description = LocalizedString.Invariant(
+                "Поля печатной страницы оригинала — определить их по фото нельзя, поэтому задаются вручную, как при печати. " +
+                "Используются, чтобы по ширине распознанного текста вычислить реальный размер шрифта: если в кадр попал не " +
+                "весь лист по высоте (а не только вплотную к тексту), расчёт от высоты кадра завышает шрифт и текст не " +
+                "помещается на страницу при экспорте — расчёт от ширины печатной области устойчив к этому."),
+            DefaultValue = 25,
+            MinValue = 0,
+            MaxValue = 100,
         },
         new StringSettingDescriptor(DocxFontFamily, LocalizedString.Invariant("Шрифт Word"))
         {

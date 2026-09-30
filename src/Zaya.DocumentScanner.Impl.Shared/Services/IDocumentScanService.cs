@@ -14,5 +14,6 @@ public interface IDocumentScanService
         DocumentScanOptions options,
         IReadOnlyDictionary<string, object>? ocrSettings = null,
         IReadOnlyDictionary<string, object>? textLayoutSettings = null,
+        IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default);
 }

@@ -1,25 +1,28 @@
-using System.Diagnostics;
+using System.Collections.ObjectModel;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using Zaya.DocumentScanner.Impl.Shared.Constants;
 using Zaya.DocumentScanner.Impl.Shared.Models;
 using Zaya.DocumentScanner.Impl.Shared.Services;
-using Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 using Zaya.DocumentScanner.Impl.Shared.ViewModels;
-using Zaya.Primitives.Settings;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Views;
 
 public partial class MainWindow : Window
 {
+    // In-process only - carries the dragged ScanFileEntry reference directly, no serialization
+    // needed since a drag never leaves this table.
+    private static readonly DataFormat<ScanFileEntry> DragFormat =
+        DataFormat.CreateInProcessFormat<ScanFileEntry>("ScanFileEntry");
+
     private readonly IDocumentScanService _scanService;
     private readonly IRawImageFileLoader _fileLoader;
     private readonly IDocxExportService _docxExportService;
     private readonly IApplicationProfileService _applicationProfileService;
     private readonly SettingsViewModel _settingsViewModel;
-    private IReadOnlyList<ScannedLine> _lastScan = [];
-    private PageMetrics _lastPage = new(0, 0);
+    private readonly ObservableCollection<ScanFileEntry> _files = [];
 
     public MainWindow()
     {
@@ -47,6 +50,22 @@ public partial class MainWindow : Window
 
         SettingsPanelControl.DataContext = _settingsViewModel;
         _settingsViewModel.Saved += (_, _) => SettingsPanelControl.IsVisible = false;
+
+        FilesList.ItemsSource = _files;
+        _files.CollectionChanged += (_, _) =>
+        {
+            StartButton.IsEnabled = _files.Count > 0;
+            RenumberFiles();
+        };
+
+        DragDrop.AddDragOverHandler(FilesList, OnRowDragOver);
+        DragDrop.AddDropHandler(FilesList, OnRowDrop);
+    }
+
+    private void RenumberFiles()
+    {
+        for (var i = 0; i < _files.Count; i++)
+            _files[i].Number = i + 1;
     }
 
     private void OnSettingsClick(object? sender, RoutedEventArgs e)
@@ -61,7 +80,7 @@ public partial class MainWindow : Window
         SettingsPanelControl.IsVisible = true;
     }
 
-    private async void OnScanClick(object? sender, RoutedEventArgs e)
+    private async void OnAddFilesClick(object? sender, RoutedEventArgs e)
     {
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel is null)
@@ -69,103 +88,72 @@ public partial class MainWindow : Window
 
         var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Выберите скан документа",
-            AllowMultiple = false,
+            Title = "Выберите сканы документа",
+            AllowMultiple = true,
             FileTypeFilter = [FilePickerFileTypes.ImageAll],
         });
 
-        var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
-        if (path is null)
-            return;
-
-        ScanButton.IsEnabled = false;
-        SaveDocxButton.IsEnabled = false;
-        StatusText.Text = "Распознаю...";
-
-        try
+        foreach (var file in files)
         {
-            var page = _fileLoader.Load(path);
-            _lastPage = new PageMetrics(page.Width, page.Height);
-
-            var profile = _applicationProfileService.ActiveProfile;
-            var scanOptions = BuildScanOptions(profile?.DocumentScannerSettings);
-            var ocrSettings = profile?.Settings.GetValueOrDefault(SettingsConstants.OcrKey);
-            var textLayoutSettings = profile?.Settings.GetValueOrDefault(SettingsConstants.TextLayoutKey);
-
-            var stopwatch = Stopwatch.StartNew();
-            _lastScan = await _scanService.ScanAsync(page, scanOptions, ocrSettings, textLayoutSettings);
-            stopwatch.Stop();
-
-            ResultText.Text = DocumentTextFormatter.ToPlainText(_lastScan);
-            StatusText.Text = $"{_lastScan.Count} строк за {stopwatch.Elapsed:mm\\:ss}";
-            SaveDocxButton.IsEnabled = _lastScan.Count > 0;
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Ошибка: {ex.Message}";
-        }
-        finally
-        {
-            ScanButton.IsEnabled = true;
+            var path = file.TryGetLocalPath();
+            if (path is not null && !_files.Any(f => f.Path == path))
+                _files.Add(new ScanFileEntry(path));
         }
     }
 
-    private async void OnSaveDocxClick(object? sender, RoutedEventArgs e)
+    private void OnRemoveFileRowClick(object? sender, RoutedEventArgs e)
     {
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel is null)
-            return;
-
-        var file = await topLevel.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            Title = "Сохранить как DOCX",
-            SuggestedFileName = "document.docx",
-            FileTypeChoices = [new FilePickerFileType("Word") { Patterns = ["*.docx"] }],
-        });
-
-        var path = file?.TryGetLocalPath();
-        if (path is null)
-            return;
-
-        try
-        {
-            var exportOptions = BuildExportOptions(_applicationProfileService.ActiveProfile?.DocumentScannerSettings);
-            _docxExportService.Export(_lastScan, _lastPage, path, exportOptions);
-            StatusText.Text = $"Сохранено: {path}";
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"Ошибка сохранения: {ex.Message}";
-        }
+        if (sender is Button { Tag: ScanFileEntry entry })
+            _files.Remove(entry);
     }
 
-    private static DocumentScanOptions BuildScanOptions(SettingDescriptorList? ds)
+    private async void OnDragHandlePointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (ds is null)
-            return new DocumentScanOptions();
+        if (sender is not Control { DataContext: ScanFileEntry entry } control)
+            return;
+        if (!e.GetCurrentPoint(control).Properties.IsLeftButtonPressed)
+            return;
 
-        return new DocumentScanOptions
-        {
-            Step = ds.GetValueAsInt(SettingsConstants.Step),
-            MarginMultiplier = ds.GetValueAsInt(SettingsConstants.MarginMultiplierPercent) / 100f,
-            MissingFrameGrace = ds.GetValueAsInt(SettingsConstants.MissingFrameGrace),
-            WordGapThresholdPercent = ds.GetValueAsInt(SettingsConstants.WordGapThresholdPercent),
-        };
+        // Marked handled so the ListBox's own click-to-select doesn't also process this same
+        // press - otherwise the row it's on gets selected instead of a drag actually starting.
+        e.Handled = true;
+
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.Create(DragFormat, entry));
+        await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
     }
 
-    private static DocxExportOptions BuildExportOptions(SettingDescriptorList? ds)
+    private void OnRowDragOver(object? sender, DragEventArgs e)
     {
-        if (ds is null)
-            return new DocxExportOptions();
+        e.DragEffects = e.DataTransfer.Contains(DragFormat) ? DragDropEffects.Move : DragDropEffects.None;
+    }
 
-        return new DocxExportOptions
-        {
-            PageSize = ds.GetValueAsString(SettingsConstants.PageSize),
-            FontFamily = ds.GetValueAsString(SettingsConstants.DocxFontFamily),
-            FontSizeMinPt = ds.GetValueAsInt(SettingsConstants.FontSizeMinPt),
-            FontSizeMaxPt = ds.GetValueAsInt(SettingsConstants.FontSizeMaxPt),
-            LayoutTolerancePercent = ds.GetValueAsInt(SettingsConstants.LayoutTolerancePercent),
-            BoldDetectionEnabled = ds.GetValueAsBool(SettingsConstants.BoldDetectionEnabled),
-        };
+    private void OnRowDrop(object? sender, DragEventArgs e)
+    {
+        var target = (e.Source as StyledElement)?.DataContext as ScanFileEntry;
+        var source = e.DataTransfer.TryGetValue(DragFormat);
+        if (target is null || source is null || ReferenceEquals(source, target))
+            return;
+
+        var oldIndex = _files.IndexOf(source);
+        var newIndex = _files.IndexOf(target);
+        if (oldIndex < 0 || newIndex < 0)
+            return;
+
+        _files.Move(oldIndex, newIndex);
+    }
+
+    private void OnStartClick(object? sender, RoutedEventArgs e)
+    {
+        if (_files.Count == 0)
+            return;
+
+        var scanWindow = new ScanWindow(
+            _files.Select(f => f.Path).ToList(),
+            _scanService,
+            _fileLoader,
+            _docxExportService,
+            _applicationProfileService);
+        scanWindow.Show(this);
     }
 }

@@ -21,6 +21,7 @@ public sealed class DocumentScanService : IDocumentScanService
         DocumentScanOptions options,
         IReadOnlyDictionary<string, object>? ocrSettings = null,
         IReadOnlyDictionary<string, object>? textLayoutSettings = null,
+        IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         var windowHeight = options.WindowHeight ?? Math.Max(1, page.Height / 4);
@@ -55,6 +56,14 @@ public sealed class DocumentScanService : IDocumentScanService
             var textResult = await layoutSession.ProcessAsync(offset, cancellationToken).ConfigureAwait(false);
 
             Accumulate(textResult.Paragraphs.SelectMany(p => p.Lines), tracked, committed, options.MissingFrameGrace, page, inkThreshold);
+
+            if (progress is not null)
+            {
+                var wordsSoFar = tracked.Values.SelectMany(t => t.Words)
+                    .Concat(committed.SelectMany(c => c.Words))
+                    .ToList();
+                progress.Report(new ScanProgress(y, windowHeight, wordsSoFar));
+            }
         }
 
         committed.AddRange(tracked.Values);

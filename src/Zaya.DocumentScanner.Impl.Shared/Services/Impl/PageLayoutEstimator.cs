@@ -9,28 +9,56 @@ namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 /// </summary>
 public static class PageLayoutEstimator
 {
-    /// <summary>A4 height in points (297 mm), used to convert the scanned page's pixel height to a real-world scale.</summary>
-    private const float A4HeightPoints = 841.89f;
+    private const double PointsPerMm = 72.0 / 25.4;
 
     /// <summary>
-    /// Assumes the scanned image height corresponds to an A4 sheet (210x297mm) photographed to
-    /// fill the frame — a real but declared approximation, not a detected page boundary. Measured
-    /// against a real scan, treating OCR's glyph bounding-box height as directly proportional to
-    /// the nominal font size (no extra correction factor) matched the source document's actual
-    /// print size closely enough that adding one back only pushed sizes further off.
+    /// Pixels-per-point for this page, derived from the printed text's own left/right extent rather
+    /// than the raw frame height. A height-based scale silently assumes the photo shows the whole
+    /// page top-to-bottom - true for a wide establishing shot, but wrong for a tight close-up crop
+    /// that only captures PART of the page's height (that photo's frame maps to less real-world mm
+    /// than a full sheet, so the old height-based estimate reads its font size as larger than it
+    /// really is, and text sized for one page overflows onto more).
+    /// <para/>
+    /// The text's horizontal extent doesn't have that problem: as long as the crop captures the
+    /// full printed width (nearly always true, since documents are usually held/shot upright and
+    /// width-cropping a page mid-line is rare), it reflects the real printable-area width regardless
+    /// of vertical cropping. That width is anchored to <paramref name="marginMm"/> - the printed
+    /// page's own margins, which can't be detected from the photo and are taken as a user setting,
+    /// the same way a print dialog asks for them - giving printableWidth = pageWidth - 2*margin as
+    /// the known real-world distance the detected text span corresponds to.
+    /// </summary>
+    public static double EstimatePixelsPerPoint(IReadOnlyList<ScannedLine> lines, string pageSize, float marginMm)
+    {
+        if (lines.Count == 0)
+            return 1.0;
+
+        var textWidthPx = Math.Max(1f, EstimateRightMargin(lines) - EstimateLeftMargin(lines));
+
+        var (pageWidthTwips, _) = PageSizes.Get(pageSize);
+        var pageWidthPt = pageWidthTwips / 20.0;
+        var marginPt = marginMm * PointsPerMm;
+        var printableWidthPt = Math.Max(1.0, pageWidthPt - 2 * marginPt);
+
+        return textWidthPx / printableWidthPt;
+    }
+
+    /// <summary>
+    /// Converts a measured line height to points using <paramref name="pixelsPerPoint"/> (see
+    /// <see cref="EstimatePixelsPerPoint"/>). Treats OCR's glyph bounding-box height as directly
+    /// proportional to the nominal font size (no extra correction factor) - matched a real scan's
+    /// actual print size closely enough that adding one back only pushed sizes further off.
     /// </summary>
     public static float EstimateFontSizePoints(
-        IReadOnlyList<ScannedLine> lines, int pageHeightPx, float minPt = 8f, float maxPt = 28f)
+        IReadOnlyList<ScannedLine> lines, double pixelsPerPoint, float minPt = 8f, float maxPt = 28f)
     {
-        if (lines.Count == 0 || pageHeightPx <= 0)
+        if (lines.Count == 0 || pixelsPerPoint <= 0)
             return 11f;
 
-        var pxToPt = A4HeightPoints / pageHeightPx;
-        var fontSize = MedianHeight(lines) * pxToPt;
+        var fontSize = MedianHeight(lines) / pixelsPerPoint;
         // A wide upper bound: this is called per line/block, not once for the whole document, so
         // a genuine heading several times taller than body text must stay distinguishable instead
         // of being flattened to the same ceiling as every other large element.
-        return Math.Clamp(fontSize, minPt, maxPt);
+        return Math.Clamp((float)fontSize, minPt, maxPt);
     }
 
     /// <summary>

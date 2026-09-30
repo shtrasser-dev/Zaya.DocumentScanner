@@ -20,6 +20,7 @@ public static class SettingsConstants
     public const string FontSizeMinPt = "fontSizeMinPt";
     public const string FontSizeMaxPt = "fontSizeMaxPt";
     public const string PageSize = "pageSize";
+    public const string PageMarginMm = "pageMarginMm";
     public const string DocxFontFamily = "docxFontFamily";
     public const string BoldDetectionEnabled = "boldDetectionEnabled";
 
