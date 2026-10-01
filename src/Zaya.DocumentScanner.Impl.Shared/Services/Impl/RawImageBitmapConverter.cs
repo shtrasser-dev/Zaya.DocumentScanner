@@ -47,4 +47,58 @@ public static class RawImageBitmapConverter
 
         return bmp;
     }
+
+    /// <summary>
+    /// Same as <see cref="ToBitmap"/>, downscaled so its longer side is at most <paramref name="maxDimension"/> -
+    /// for the file table's row thumbnail/hover preview, where the full source resolution (a multi-megapixel
+    /// photo) would be wasted memory for a handful of on-screen pixels.
+    /// </summary>
+    /// <remarks>
+    /// Samples the source pixels directly (nearest-neighbor) instead of building the full-size
+    /// bitmap first and calling <c>Bitmap.CreateScaledBitmap</c> on it - Avalonia's Skia backend
+    /// rejects resizing a <see cref="WriteableBitmap"/> ("Invalid source bitmap type"), since that
+    /// resize path only accepts its own decoded/immutable bitmap implementations.
+    /// </remarks>
+    public static WriteableBitmap ToScaledBitmap(IRawImage image, int maxDimension)
+    {
+        if (image.Format != ZayaPixelFormat.Bgra32)
+            throw new NotSupportedException($"Unsupported pixel format for preview: {image.Format}");
+
+        var srcW = image.Width;
+        var srcH = image.Height;
+        var scale = Math.Min(1.0, maxDimension / (double)Math.Max(srcW, srcH));
+        var dstW = Math.Max(1, (int)Math.Round(srcW * scale));
+        var dstH = Math.Max(1, (int)Math.Round(srcH * scale));
+
+        var bmp = new WriteableBitmap(new PixelSize(dstW, dstH), new Vector(96, 96), PixelFormats.Bgra8888, AlphaFormat.Unpremul);
+
+        using var fb = bmp.Lock();
+        var src = image.ToByteArray();
+        var srcStride = image.Stride;
+        var dstStride = fb.RowBytes;
+        var dstPtr = fb.Address;
+
+        var dstRow = new byte[dstStride];
+        for (var dy = 0; dy < dstH; dy++)
+        {
+            var sy = Math.Min(srcH - 1, (int)((dy + 0.5) / scale));
+            var srcRowOffset = sy * srcStride;
+            for (var dx = 0; dx < dstW; dx++)
+            {
+                var sx = Math.Min(srcW - 1, (int)((dx + 0.5) / scale));
+                var srcOffset = srcRowOffset + sx * 4;
+                var dstOffset = dx * 4;
+                if (srcOffset + 4 > src.Length)
+                    continue;
+                dstRow[dstOffset] = src[srcOffset];
+                dstRow[dstOffset + 1] = src[srcOffset + 1];
+                dstRow[dstOffset + 2] = src[srcOffset + 2];
+                dstRow[dstOffset + 3] = src[srcOffset + 3];
+            }
+
+            Marshal.Copy(dstRow, 0, dstPtr + dy * dstStride, Math.Min(dstStride, dstW * 4));
+        }
+
+        return bmp;
+    }
 }

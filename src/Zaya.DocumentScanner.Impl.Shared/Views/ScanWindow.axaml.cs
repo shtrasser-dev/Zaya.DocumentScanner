@@ -17,14 +17,15 @@ namespace Zaya.DocumentScanner.Impl.Shared.Views;
 /// </summary>
 public partial class ScanWindow : Window
 {
-    // Source image display box for the "Исходный документ" tab - large enough to be useful,
-    // small enough a big scan doesn't blow up the window (the tab scrolls when it doesn't fit).
-    private const double SourcePreviewMaxWidth = 800;
-    private const double SourcePreviewMaxHeight = 440;
+    // Fallback width for a page's preview when the scroll viewport hasn't been measured yet
+    // (first page of the very first scan, before any layout pass has run). Every page after that
+    // fits the actual viewport width instead.
+    private const double SourcePreviewFallbackWidth = 800;
 
     private readonly IReadOnlyList<string> _filePaths;
     private readonly IDocumentScanService _scanService;
     private readonly IRawImageFileLoader _fileLoader;
+    private readonly IRawImageBitmapService _bitmapService;
     private readonly IDocxExportService _docxExportService;
     private readonly IApplicationProfileService _applicationProfileService;
     private readonly List<ScannedPage> _pages = [];
@@ -34,6 +35,7 @@ public partial class ScanWindow : Window
         _filePaths = [];
         _scanService = null!;
         _fileLoader = null!;
+        _bitmapService = null!;
         _docxExportService = null!;
         _applicationProfileService = null!;
         InitializeComponent();
@@ -43,12 +45,14 @@ public partial class ScanWindow : Window
         IReadOnlyList<string> filePaths,
         IDocumentScanService scanService,
         IRawImageFileLoader fileLoader,
+        IRawImageBitmapService bitmapService,
         IDocxExportService docxExportService,
         IApplicationProfileService applicationProfileService)
     {
         _filePaths = filePaths;
         _scanService = scanService;
         _fileLoader = fileLoader;
+        _bitmapService = bitmapService;
         _docxExportService = docxExportService;
         _applicationProfileService = applicationProfileService;
         InitializeComponent();
@@ -77,13 +81,17 @@ public partial class ScanWindow : Window
                 page = _fileLoader.Load(path);
                 var pageMetrics = new PageMetrics(page.Width, page.Height);
 
-                var bitmap = RawImageBitmapConverter.ToBitmap(page);
-                SourceCanvas.SetImage(bitmap, page.Width, page.Height, SourcePreviewMaxWidth, SourcePreviewMaxHeight);
+                var pageCanvas = new ScanPreviewCanvas();
+                SourcePagesPanel.Children.Add(pageCanvas);
+
+                var bitmap = _bitmapService.ToBitmap(page);
+                var maxWidth = SourceScroll.Bounds.Width > 0 ? SourceScroll.Bounds.Width - 4 : SourcePreviewFallbackWidth;
+                pageCanvas.SetImage(bitmap, page.Width, page.Height, maxWidth, double.PositiveInfinity);
 
                 var progress = new Progress<ScanProgress>(p =>
                 {
-                    SourceCanvas.ShowWindow(p.WindowTopY, p.WindowHeight);
-                    SourceCanvas.ShowWords(p.Words);
+                    pageCanvas.ShowWindow(p.WindowTopY, p.WindowHeight);
+                    pageCanvas.ShowWords(p.Words);
                 });
 
                 // See MainWindow's earlier fix: the OCR/layout engines are synchronous native/CPU
@@ -92,8 +100,8 @@ public partial class ScanWindow : Window
                 var lines = await Task.Run(
                     () => _scanService.ScanAsync(page, scanOptions, ocrSettings, textLayoutSettings, progress));
 
-                SourceCanvas.HideWindow();
-                SourceCanvas.ShowWords(lines.SelectMany(l => l.Words).ToList());
+                pageCanvas.HideWindow();
+                pageCanvas.ShowWords(lines.SelectMany(l => l.Words).ToList());
 
                 _pages.Add(new ScannedPage(lines, pageMetrics));
                 ResultPreviewHost.Content = DocumentPreviewBuilder.Build(_pages, exportOptions);
@@ -113,6 +121,7 @@ public partial class ScanWindow : Window
         var totalLines = _pages.Sum(p => p.Lines.Count);
         StatusText.Text = $"Готово: {_pages.Count} файл(ов), {totalLines} строк за {overallStopwatch.Elapsed:mm\\:ss}";
         SaveDocxButton.IsEnabled = _pages.Count > 0;
+        ResultTabs.SelectedIndex = 1;
     }
 
     private async void OnSaveDocxClick(object? sender, RoutedEventArgs e)

@@ -1,9 +1,11 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Zaya.DocumentScanner.Impl.Shared.Converters;
+using Zaya.Logging.Models;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 
+[Log(LogLevel.Debug, LogParameters = true)]
 public sealed class JsonConfigurationService : IJsonConfigurationService
 {
     private static JsonSerializerOptions Options { get; } = new()

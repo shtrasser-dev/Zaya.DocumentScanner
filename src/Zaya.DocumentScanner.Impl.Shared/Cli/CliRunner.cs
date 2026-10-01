@@ -77,24 +77,36 @@ public static class CliRunner
             Console.WriteLine($"[{i + 1}/{options.ImagePaths.Count}] {Path.GetFileName(path)}");
             logger.LogInformation("Начат файл {Index}/{Total}: {Path}", i + 1, options.ImagePaths.Count, path);
 
-            using var page = fileLoader.Load(path);
-            var pageMetrics = new PageMetrics(page.Width, page.Height);
-
-            var progress = new Progress<ScanProgress>(p =>
+            try
             {
-                var percent = pageMetrics.HeightPx > 0
-                    ? Math.Clamp(100 * p.WindowTopY / pageMetrics.HeightPx, 0, 100)
-                    : 0;
-                Console.Write($"\r  распознаётся... {percent,3}%  (слов: {p.Words.Count})   ");
-            });
+                using var page = fileLoader.Load(path);
+                var pageMetrics = new PageMetrics(page.Width, page.Height);
 
-            var lines = await scanService.ScanAsync(page, scanOptions, ocrSettings, textLayoutSettings, progress)
-                .ConfigureAwait(false);
-            Console.WriteLine();
+                var progress = new Progress<ScanProgress>(p =>
+                {
+                    var percent = pageMetrics.HeightPx > 0
+                        ? Math.Clamp(100 * p.WindowTopY / pageMetrics.HeightPx, 0, 100)
+                        : 0;
+                    Console.Write($"\r  распознаётся... {percent,3}%  (слов: {p.Words.Count})   ");
+                });
 
-            logger.LogInformation("Файл {Path}: {Count} строк", path, lines.Count);
-            Console.WriteLine($"  готово: {lines.Count} строк");
-            pages.Add(new ScannedPage(lines, pageMetrics));
+                var lines = await scanService.ScanAsync(page, scanOptions, ocrSettings, textLayoutSettings, progress)
+                    .ConfigureAwait(false);
+                Console.WriteLine();
+
+                logger.LogInformation("Файл {Path}: {Count} строк", path, lines.Count);
+                Console.WriteLine($"  готово: {lines.Count} строк");
+                pages.Add(new ScannedPage(lines, pageMetrics));
+            }
+            catch (Exception ex)
+            {
+                // The underlying service call already logged this (see [Log] on RawImageFileLoader/
+                // DocumentScanService) - this is just what stops the CLI from crashing with a raw
+                // stack trace on a corrupt/unreadable file.
+                Console.WriteLine();
+                Console.Error.WriteLine($"Ошибка на файле {Path.GetFileName(path)}: {ex.Message}");
+                return 2;
+            }
         }
 
         var outputFullPath = Path.GetFullPath(options.OutputPath);

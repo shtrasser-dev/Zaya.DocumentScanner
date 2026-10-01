@@ -1,11 +1,13 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using Zaya.Logging.Models;
 using Zaya.Primitives;
 using ZPixelFormat = Zaya.Primitives.PixelFormat;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 
+[Log(LogLevel.Debug, LogParameters = true)]
 public sealed class RawImageFileLoader : IRawImageFileLoader
 {
     public IRawImage Load(string path)

@@ -6,4 +6,8 @@ public interface IConfigurationPathService
     string GetRootAppDirectory();
 
     string GetProfilesDirectory();
+
+    string GetLogConfigFilePath();
+
+    string GetLogsDirectory();
 }

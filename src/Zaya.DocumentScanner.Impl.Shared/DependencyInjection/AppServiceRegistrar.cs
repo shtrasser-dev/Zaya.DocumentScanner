@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Zaya.DocumentScanner.Impl.Shared.Services;
 using Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 using Zaya.DocumentScanner.Impl.Shared.ViewModels;
+using Zaya.Logging.Impl.Microsoft.Services;
 using Zaya.Logging.Services;
 using Zaya.OCR.Impl.OneOcr;
 using Zaya.OCR.Impl.ProximityTextLayout;
@@ -15,16 +16,18 @@ public static class AppServiceRegistrar
     {
         services.AddSingleton(logging);
 
-        services.AddSingleton<IOCRService, OneOcrService>();
-        services.AddSingleton<ITextLayoutService, ProximityTextLayoutService>();
-        services.AddSingleton<IDocumentScanService, DocumentScanService>();
-        services.AddSingleton<IRawImageFileLoader, RawImageFileLoader>();
-        services.AddSingleton<IDocxExportService, DocxExportService>();
+        services.AddSingleton<IOCRService, OneOcrService>().WrapLogging<IOCRService>();
+        services.AddSingleton<ITextLayoutService, ProximityTextLayoutService>().WrapLogging<ITextLayoutService>();
+        services.AddSingleton<IDocumentScanService, DocumentScanService>().WrapLogging<IDocumentScanService>();
+        services.AddSingleton<IRawImageFileLoader, RawImageFileLoader>().WrapLogging<IRawImageFileLoader>();
+        services.AddSingleton<IRawImageBitmapService, RawImageBitmapService>().WrapLogging<IRawImageBitmapService>();
+        services.AddSingleton<IDocxExportService, DocxExportService>().WrapLogging<IDocxExportService>();
 
-        services.AddSingleton<IJsonConfigurationService, JsonConfigurationService>();
-        services.AddSingleton<IConfigurationPathService, ConfigurationPathService>();
-        services.AddSingleton<IApplicationProfileService, ApplicationProfileService>();
-        services.AddSingleton<ISettingsService, SettingsService>();
+        services.AddSingleton<IJsonConfigurationService, JsonConfigurationService>().WrapLogging<IJsonConfigurationService>();
+        services.AddSingleton<IConfigurationPathService, ConfigurationPathService>().WrapLogging<IConfigurationPathService>();
+        services.AddSingleton<IApplicationProfileService, ApplicationProfileService>().WrapLogging<IApplicationProfileService>();
+        services.AddSingleton<ISettingsService, SettingsService>().WrapLogging<ISettingsService>();
         services.AddSingleton<SettingsViewModel>();
+        services.AddSingleton<MainViewModel>();
     }
 }

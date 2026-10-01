@@ -2,9 +2,11 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Zaya.DocumentScanner.Impl.Shared.Models;
+using Zaya.Logging.Models;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 
+[Log(LogLevel.Debug)]
 public sealed class DocxExportService : IDocxExportService
 {
     public void Export(IReadOnlyList<ScannedPage> pages, string path, DocxExportOptions? options = null)

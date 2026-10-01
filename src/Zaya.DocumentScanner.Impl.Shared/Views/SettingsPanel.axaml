@@ -2,12 +2,21 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:Zaya.DocumentScanner.Impl.Shared.ViewModels"
              xmlns:ui="clr-namespace:Zaya.UI.Impl.Controls;assembly=Zaya.UI.Impl"
+             xmlns:ctrl="clr-namespace:Zaya.DocumentScanner.Impl.Shared.Views.Controls"
              x:Class="Zaya.DocumentScanner.Impl.Shared.Views.SettingsPanel"
              x:DataType="vm:SettingsViewModel">
-    <Border Background="#F2F2F2"
-            BorderBrush="Gray"
-            BorderThickness="0,1,0,0"
-            Padding="12"
+    <UserControl.Styles>
+        <!-- Left-side tab strip, same as ScreenTranslator's own settings panel. -->
+        <Style Selector="TabItem">
+            <Setter Property="Width" Value="{x:Static ctrl:MainLayout.NavWidth}" />
+            <Setter Property="MinWidth" Value="{x:Static ctrl:MainLayout.NavWidth}" />
+            <Setter Property="MaxWidth" Value="{x:Static ctrl:MainLayout.NavWidth}" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
+    </UserControl.Styles>
+
+    <Border Padding="12,8,12,12"
             MaxHeight="420">
         <DockPanel>
             <StackPanel DockPanel.Dock="Bottom"
@@ -19,7 +28,7 @@
                 <Button Content="Сохранить" Command="{Binding SaveCommand}" />
             </StackPanel>
 
-            <TabControl>
+            <TabControl TabStripPlacement="Left">
                 <TabItem Header="Сканирование">
                     <ScrollViewer>
                         <ui:SettingDescriptorListControl

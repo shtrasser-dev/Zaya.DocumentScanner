@@ -1,6 +1,21 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Zaya.DocumentScanner.Impl.Shared.App">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <!-- Soft watermark: slightly darker on light, slightly lighter on dark. -->
+                <ResourceDictionary x:Key="Light">
+                    <x:String x:Key="MainWindowLogoCss">g, path { fill: #1A1A1A !important; }</x:String>
+                    <x:Double x:Key="MainWindowLogoOpacity">0.09</x:Double>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <x:String x:Key="MainWindowLogoCss">g, path { fill: #F0F0F0 !important; }</x:String>
+                    <x:Double x:Key="MainWindowLogoOpacity">0.10</x:Double>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
     <Application.Styles>
         <FluentTheme>
             <FluentTheme.Palettes>

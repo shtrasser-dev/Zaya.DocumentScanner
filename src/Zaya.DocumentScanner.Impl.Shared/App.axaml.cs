@@ -48,9 +48,10 @@ public partial class App : Application
         _mainWindow = new MainWindow(
             _serviceProvider.GetRequiredService<IDocumentScanService>(),
             _serviceProvider.GetRequiredService<IRawImageFileLoader>(),
+            _serviceProvider.GetRequiredService<IRawImageBitmapService>(),
             _serviceProvider.GetRequiredService<IDocxExportService>(),
             profileService,
-            _serviceProvider.GetRequiredService<SettingsViewModel>());
+            _serviceProvider.GetRequiredService<MainViewModel>());
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

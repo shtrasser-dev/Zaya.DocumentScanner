@@ -1,10 +1,12 @@
 using Zaya.DocumentScanner.Impl.Shared.Models;
+using Zaya.Logging.Models;
 using Zaya.OCR.Impl.OneOcr;
 using Zaya.OCR.Impl.ProximityTextLayout;
 using Zaya.Primitives.Settings;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 
+[Log(LogLevel.Debug)]
 public sealed class SettingsService : ISettingsService
 {
     private readonly IApplicationProfileService _applicationProfileService;

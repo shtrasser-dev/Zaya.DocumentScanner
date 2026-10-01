@@ -1,9 +1,11 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using Zaya.DocumentScanner.Impl.Shared.Constants;
 using Zaya.DocumentScanner.Impl.Shared.Models;
+using Zaya.Logging.Models;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 
+[Log(LogLevel.Debug, LogParameters = true)]
 public sealed class ApplicationProfileService : ObservableObject, IApplicationProfileService
 {
     private readonly IJsonConfigurationService _jsonConfigurationService;
