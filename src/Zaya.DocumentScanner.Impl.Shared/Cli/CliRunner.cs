@@ -90,13 +90,15 @@ public static class CliRunner
                     Console.Write($"\r  распознаётся... {percent,3}%  (слов: {p.Words.Count})   ");
                 });
 
-                var lines = await scanService.ScanAsync(page, scanOptions, ocrSettings, textLayoutSettings, progress)
+                var result = await scanService.ScanAsync(page, scanOptions, ocrSettings, textLayoutSettings, progress)
                     .ConfigureAwait(false);
                 Console.WriteLine();
 
-                logger.LogInformation("Файл {Path}: {Count} строк", path, lines.Count);
-                Console.WriteLine($"  готово: {lines.Count} строк");
-                pages.Add(new ScannedPage(lines, pageMetrics));
+                logger.LogInformation(
+                    "Файл {Path}: {Count} строк, {RotatedCount} повёрнутых блоков",
+                    path, result.Lines.Count, result.RotatedClusters.Count);
+                Console.WriteLine($"  готово: {result.Lines.Count} строк, {result.RotatedClusters.Count} повёрнутых блоков");
+                pages.Add(new ScannedPage(result.Lines, result.RotatedClusters, pageMetrics));
             }
             catch (Exception ex)
             {

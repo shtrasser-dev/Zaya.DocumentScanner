@@ -18,7 +18,7 @@ public sealed class DocumentScanService : IDocumentScanService
         _layout = layout;
     }
 
-    public async Task<IReadOnlyList<ScannedLine>> ScanAsync(
+    public async Task<ScanResult> ScanAsync(
         IRawImage page,
         DocumentScanOptions options,
         IReadOnlyDictionary<string, object>? ocrSettings = null,
@@ -53,6 +53,7 @@ public sealed class DocumentScanService : IDocumentScanService
 
         var tracked = new Dictionary<Guid, TrackedLine>();
         var committed = new List<TrackedLine>();
+        var rotatedObservations = new RotatedTextClusterer.ObservationSet();
 
         for (var y = -padding; y + windowHeight <= page.Height + padding; y += options.Step)
         {
@@ -61,16 +62,30 @@ public sealed class DocumentScanService : IDocumentScanService
             using var crop = RawImageCropper.CropRowsPadded(page, y, windowHeight);
             var ocrResult = await ocrSession.RecognizeAsync(crop, cancellationToken).ConfigureAwait(false);
 
+            // Words whose own angle marks them as rotated content (e.g. a round stamp's text,
+            // which follows the curve) are set aside here, before line assembly ever sees them -
+            // forcing them into a horizontal line would either mangle them or lose them outright.
+            // They're collected separately (RotatedTextClusterer) and rendered as their own
+            // rotated text blocks instead, not fed to the straight-line word-to-line assembler.
+            var (normalWords, outlierWords) = RotatedTextClusterer.SplitByAngle(
+                ocrResult.Words, options.MaxWordAngleDeviationDegrees);
+
             // The crop already includes the margin rows (OCR gets full context, nothing is
             // pre-clipped), and the layout engine links lines across frames on the whole set -
             // only afterward does TrustCenter decide which resulting lines are trustworthy.
-            var offset = new OffsetOcrResult(ocrResult.Words, ocrResult.Confidence, new Vector2(0, y));
+            var offset = new OffsetOcrResult(normalWords, ocrResult.Confidence, new Vector2(0, y));
             var textResult = await layoutSession.ProcessAsync(offset, cancellationToken).ConfigureAwait(false);
 
             var trustedLines = TrustCenter.FilterEntirelyBuffered(
                 textResult.Paragraphs.SelectMany(p => p.Lines), y, windowHeight, options.MarginMultiplier);
 
             Accumulate(trustedLines, tracked, committed, options.MissingFrameGrace, page, inkThreshold, y, options.MarginMultiplier);
+
+            if (outlierWords.Count > 0)
+            {
+                var offsetOutliers = new OffsetOcrResult(outlierWords, ocrResult.Confidence, new Vector2(0, y));
+                rotatedObservations.Add(offsetOutliers.Words);
+            }
 
             if (progress is not null)
             {
@@ -82,7 +97,7 @@ public sealed class DocumentScanService : IDocumentScanService
         }
 
         committed.AddRange(tracked.Values);
-        return Dedupe(committed);
+        return new ScanResult(Dedupe(committed), rotatedObservations.BuildClusters());
     }
 
     /// <summary>

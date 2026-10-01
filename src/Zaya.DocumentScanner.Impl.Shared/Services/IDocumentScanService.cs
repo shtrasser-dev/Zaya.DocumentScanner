@@ -9,7 +9,7 @@ namespace Zaya.DocumentScanner.Impl.Shared.Services;
 /// </summary>
 public interface IDocumentScanService
 {
-    Task<IReadOnlyList<ScannedLine>> ScanAsync(
+    Task<ScanResult> ScanAsync(
         IRawImage page,
         DocumentScanOptions options,
         IReadOnlyDictionary<string, object>? ocrSettings = null,

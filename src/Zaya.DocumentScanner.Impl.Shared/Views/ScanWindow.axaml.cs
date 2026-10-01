@@ -97,13 +97,13 @@ public partial class ScanWindow : Window
                 // See MainWindow's earlier fix: the OCR/layout engines are synchronous native/CPU
                 // work wrapped in a Task, so this has to run off the UI thread or progress reports
                 // (and the window itself) freeze until the whole scan finishes.
-                var lines = await Task.Run(
+                var result = await Task.Run(
                     () => _scanService.ScanAsync(page, scanOptions, ocrSettings, textLayoutSettings, progress));
 
                 pageCanvas.HideWindow();
-                pageCanvas.ShowWords(lines.SelectMany(l => l.Words).ToList());
+                pageCanvas.ShowWords(result.Lines.SelectMany(l => l.Words).ToList());
 
-                _pages.Add(new ScannedPage(lines, pageMetrics));
+                _pages.Add(new ScannedPage(result.Lines, result.RotatedClusters, pageMetrics));
                 ResultPreviewHost.Content = DocumentPreviewBuilder.Build(_pages, exportOptions);
             }
             catch (Exception ex)

@@ -18,6 +18,7 @@ public static class DocumentScannerSettingDescriptors
     public const string MarginMultiplierPercent = SettingsConstants.MarginMultiplierPercent;
     public const string MissingFrameGrace = SettingsConstants.MissingFrameGrace;
     public const string WordGapThresholdPercent = SettingsConstants.WordGapThresholdPercent;
+    public const string MaxWordAngleDeviationDegrees = SettingsConstants.MaxWordAngleDeviationDegrees;
     public const string LayoutTolerancePercent = SettingsConstants.LayoutTolerancePercent;
     public const string FontSizeMinPt = SettingsConstants.FontSizeMinPt;
     public const string FontSizeMaxPt = SettingsConstants.FontSizeMaxPt;
@@ -67,6 +68,17 @@ public static class DocumentScannerSettingDescriptors
             DefaultValue = 150,
             MinValue = 10,
             MaxValue = 1000,
+        },
+        new IntegerSettingDescriptor(MaxWordAngleDeviationDegrees, LocalizedString.Invariant("Макс. отклонение угла слова (°)"))
+        {
+            Description = LocalizedString.Invariant(
+                "Слова, чей угол наклона отличается от типичного угла этого кадра больше чем на столько градусов, " +
+                "выводятся отдельными повёрнутыми текстовыми блоками вместо обычных строк — так печати и штампы " +
+                "(текст которых идёт по дуге под разными углами) не портят обычный текст рядом с собой. " +
+                "180 — отключает выделение, такие слова просто остаются обычным текстом."),
+            DefaultValue = 30,
+            MinValue = 0,
+            MaxValue = 180,
         },
         new IntegerSettingDescriptor(LayoutTolerancePercent, LocalizedString.Invariant("Допуск разметки страницы (%)"))
         {

@@ -29,4 +29,14 @@ public sealed class DocumentScanOptions
     /// at the default split into separate, misordered fragments instead of one line.
     /// </summary>
     public int WordGapThresholdPercent { get; init; } = 150;
+
+    /// <summary>
+    /// Words whose own text angle deviates from this frame's typical (median) word angle by more
+    /// than this many degrees are set aside as rotated content instead of being fed to line
+    /// assembly (see RotatedTextClusterer). Ordinary printed text sits at one consistent angle
+    /// (give or take a photographed page's own small, uniform tilt); a round stamp or seal's text
+    /// follows the curve, so its words swing through a wide range of angles word to word. 180
+    /// effectively disables this (no real angle delta exceeds it).
+    /// </summary>
+    public float MaxWordAngleDeviationDegrees { get; init; } = 30f;
 }

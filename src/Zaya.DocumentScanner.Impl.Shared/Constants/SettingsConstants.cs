@@ -16,6 +16,7 @@ public static class SettingsConstants
     public const string MarginMultiplierPercent = "marginMultiplierPercent";
     public const string MissingFrameGrace = "missingFrameGrace";
     public const string WordGapThresholdPercent = "wordGapThresholdPercent";
+    public const string MaxWordAngleDeviationDegrees = "maxWordAngleDeviationDegrees";
     public const string LayoutTolerancePercent = "layoutTolerancePercent";
     public const string FontSizeMinPt = "fontSizeMinPt";
     public const string FontSizeMaxPt = "fontSizeMaxPt";

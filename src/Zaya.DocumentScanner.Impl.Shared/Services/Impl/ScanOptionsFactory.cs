@@ -18,6 +18,7 @@ public static class ScanOptionsFactory
             MarginMultiplier = ds.GetValueAsInt(SettingsConstants.MarginMultiplierPercent) / 100f,
             MissingFrameGrace = ds.GetValueAsInt(SettingsConstants.MissingFrameGrace),
             WordGapThresholdPercent = ds.GetValueAsInt(SettingsConstants.WordGapThresholdPercent),
+            MaxWordAngleDeviationDegrees = ds.GetValueAsInt(SettingsConstants.MaxWordAngleDeviationDegrees),
         };
     }
 
