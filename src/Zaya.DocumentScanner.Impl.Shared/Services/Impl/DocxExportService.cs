@@ -143,9 +143,9 @@ public sealed class DocxExportService : IDocxExportService
         var paragraph = new Paragraph(paragraphProperties);
 
         // Flatten to one entry per original word, each carrying whether a hard line break
-        // (<w:br/>) precedes it. A break belongs only at the start of a new sentence unit — lines
-        // merged together by word-wrap within one unit are joined by a plain space instead, same
-        // as everywhere else in this pipeline that already draws that distinction.
+        // (<w:br/>) precedes it — see DocumentLineGrouping.FlattenWords for when that is (start of
+        // a new sentence unit, or a word gap so wide within its own source line that gluing it to
+        // the previous word would read as one run-on phrase or compound word).
         //
         // No smoothing here: this document bolds individual words deliberately (a field's label
         // but not its value, e.g. "Пол:" bold / "Мужской" not) — a real, per-word distinction, not
@@ -153,27 +153,15 @@ public sealed class DocxExportService : IDocxExportService
         // own (an open/round-heavy word can measure lower than a denser one at the same weight),
         // but "smooth toward neighbors" was actively wrong for the genuine label/value case and
         // didn't reliably fix the real noise either, so the raw per-word reading is used as-is.
-        var words = new List<(string Text, bool IsBold, bool BreakBefore)>();
-        foreach (var unit in units)
-        {
-            var isFirstWordOfUnit = true;
-            foreach (var line in unit.Lines)
-            {
-                foreach (var word in line.Words)
-                {
-                    var isBold = options.BoldDetectionEnabled && word.InkDensity >= boldThreshold;
-                    words.Add((word.Text, isBold, isFirstWordOfUnit && words.Count > 0));
-                    isFirstWordOfUnit = false;
-                }
-            }
-        }
+        var words = DocumentLineGrouping.FlattenWords(units);
 
         Run? run = null;
         bool? runIsBold = null;
         var pendingSpace = false;
 
-        foreach (var (text, isBold, breakBefore) in words)
+        foreach (var (word, breakBefore) in words)
         {
+            var isBold = options.BoldDetectionEnabled && word.InkDensity >= boldThreshold;
             if (run is null || isBold != runIsBold)
             {
                 var runProperties = isBold
@@ -190,7 +178,7 @@ public sealed class DocxExportService : IDocxExportService
                 pendingSpace = false;
             }
 
-            run.Append(new Text((pendingSpace ? " " : "") + text) { Space = SpaceProcessingModeValues.Preserve });
+            run.Append(new Text((pendingSpace ? " " : "") + word.Text) { Space = SpaceProcessingModeValues.Preserve });
             pendingSpace = true;
         }
 

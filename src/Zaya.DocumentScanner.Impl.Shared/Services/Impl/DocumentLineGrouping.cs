@@ -82,6 +82,54 @@ public static class DocumentLineGrouping
         IReadOnlyList<ScannedLine> group, float rightMargin, float rightMarginTolerance)
         => SplitIntoSentenceUnits(group, rightMargin, rightMarginTolerance).Select(u => u.Text).ToList();
 
+    /// <summary>One word from a flattened sentence unit, and whether a hard break belongs before it.</summary>
+    public readonly record struct FlattenedWord(ScannedWord Word, bool BreakBefore);
+
+    /// <summary>
+    /// A gap between two consecutive words of the SAME scanned line this many times that line's
+    /// own text height almost certainly isn't a real word gap - it's the signature of
+    /// LineAssembler bridging two physically unrelated chunks into one line (e.g. a letterhead's
+    /// side-by-side blocks, joined across the gap between them because WordGapThreshold is
+    /// widened to 150% for ordinary label/value lines). There's no reliable way to tell this
+    /// apart from a genuinely wide gap by column-boundary detection - column/paragraph detection
+    /// always has a real error rate - but refusing to silently fuse the two chunks into one
+    /// run-on phrase is a much safer, narrower call: at worst this breaks a line that didn't need
+    /// it (an extra wrap), never a glued, unreadable compound word.
+    /// </summary>
+    private const float WordGapOutlierHeightMultiplier = 3f;
+
+    /// <summary>
+    /// Flattens sentence units into one entry per original word, each carrying whether a hard
+    /// break belongs before it - at the start of a new sentence unit (first word only), or before
+    /// a word that follows a gap so wide inside its own source line that it almost certainly isn't
+    /// really adjacent to the previous word (see <see cref="WordGapOutlierHeightMultiplier"/>).
+    /// Shared by the DOCX exporter and the live preview so both split the same way.
+    /// </summary>
+    public static List<FlattenedWord> FlattenWords(IReadOnlyList<SentenceUnit> units)
+    {
+        var result = new List<FlattenedWord>();
+        foreach (var unit in units)
+        {
+            var isFirstWordOfUnit = true;
+            foreach (var line in unit.Lines)
+            {
+                ScannedWord? prevWord = null;
+                foreach (var word in line.Words)
+                {
+                    var height = line.Height > 0 ? line.Height : 20f;
+                    var isGapOutlier = prevWord is not null
+                        && word.MinX - prevWord.MaxX > height * WordGapOutlierHeightMultiplier;
+                    var breakBefore = (isFirstWordOfUnit && result.Count > 0) || isGapOutlier;
+                    result.Add(new FlattenedWord(word, breakBefore));
+                    isFirstWordOfUnit = false;
+                    prevWord = word;
+                }
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>
     /// Splits a paragraph-sized group into runs of consecutive sentence units that share the same
     /// alignment (see <see cref="ClassifyAlignment"/>), each destined for its own Word paragraph —

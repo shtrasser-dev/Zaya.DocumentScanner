@@ -167,30 +167,20 @@ public static class DocumentPreviewBuilder
         if (fitScale < 0.999)
             textBlock.LineHeight = fontSizePt * PageFitScaler.LineSpacingFactor * scale;
 
-        // Same flattening as DocxExportService.BuildParagraph: one entry per original word, a hard
-        // break only at the start of a new sentence unit, no smoothing (see that method's remarks).
-        var words = new List<(string Text, bool IsBold, bool BreakBefore)>();
-        foreach (var unit in units)
-        {
-            var isFirstWordOfUnit = true;
-            foreach (var line in unit.Lines)
-            {
-                foreach (var word in line.Words)
-                {
-                    var isBold = options.BoldDetectionEnabled && word.InkDensity >= boldThreshold;
-                    words.Add((word.Text, isBold, isFirstWordOfUnit && words.Count > 0));
-                    isFirstWordOfUnit = false;
-                }
-            }
-        }
+        // Same flattening as DocxExportService.BuildParagraph (shared via DocumentLineGrouping):
+        // one entry per original word, a hard break at the start of a new sentence unit or before
+        // a word that follows an abnormally wide gap within its own source line, no smoothing
+        // (see that method's remarks).
+        var words = DocumentLineGrouping.FlattenWords(units);
 
         var pendingSpace = false;
-        foreach (var (text, isBold, breakBefore) in words)
+        foreach (var (word, breakBefore) in words)
         {
             if (breakBefore)
                 textBlock.Inlines!.Add(new LineBreak());
 
-            textBlock.Inlines!.Add(new Run((pendingSpace ? " " : "") + text)
+            var isBold = options.BoldDetectionEnabled && word.InkDensity >= boldThreshold;
+            textBlock.Inlines!.Add(new Run((pendingSpace ? " " : "") + word.Text)
             {
                 FontWeight = isBold ? FontWeight.Bold : FontWeight.Normal,
             });
