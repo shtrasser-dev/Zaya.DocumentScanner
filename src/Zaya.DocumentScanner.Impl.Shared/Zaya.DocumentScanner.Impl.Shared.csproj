@@ -36,7 +36,7 @@
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
-  <!-- TEMP: direct project references to test the unreleased ShiftSearchMode change locally.
+  <!-- TEMP: direct project references to the unreleased Zaya.OCR 2.1.0 (respectOcrLines / IOCRWordExt) for local testing.
        Revert to the Zaya.OCR* PackageReferences above once a new NuGet version is published. -->
   <ItemGroup>
     <ProjectReference Include="..\..\..\Zaya.OCR\src\Zaya.OCR\Zaya.OCR.csproj" />

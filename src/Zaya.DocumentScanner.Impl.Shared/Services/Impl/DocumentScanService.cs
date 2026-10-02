@@ -48,6 +48,7 @@ public sealed class DocumentScanService : IDocumentScanService
             ? new Dictionary<string, object>(textLayoutSettings)
             : [];
         mergedTextLayoutSettings["wordGapThreshold"] = options.WordGapThresholdPercent;
+        mergedTextLayoutSettings["respectOcrLines"] = options.RespectOcrLines;
 
         using var layoutSession = await _layout.CreateSessionAsync(mergedTextLayoutSettings, cancellationToken).ConfigureAwait(false);
 

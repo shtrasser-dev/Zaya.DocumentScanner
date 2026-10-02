@@ -39,4 +39,13 @@ public sealed class DocumentScanOptions
     /// effectively disables this (no real angle delta exceeds it).
     /// </summary>
     public float MaxWordAngleDeviationDegrees { get; init; } = 30f;
+
+    /// <summary>
+    /// Never let the layout engine join words the OCR engine itself put in different lines of the
+    /// same frame. WordGapThresholdPercent is widened for label/value lines, and that width also
+    /// bridges the narrow gap between two neighboring table cells - while OneOCR's own lines
+    /// already split those cells correctly. Like WordGapThresholdPercent, this always overrides
+    /// the text-layout engine's own setting of the same name.
+    /// </summary>
+    public bool RespectOcrLines { get; init; } = true;
 }

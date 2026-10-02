@@ -263,12 +263,16 @@ public static class DocumentLineGrouping
         var segLeft = new List<ScannedLine>();
         var segRight = new List<ScannedLine>();
 
+        // A stretch only renders side by side under the same "at least two lines on each side"
+        // rule TryDetectTwoColumns applies to the whole group - otherwise one stray line can make
+        // a table on its own, e.g. a centered heading sitting right of two short left-aligned
+        // lines below it. A stretch that fails the rule stays ordinary lines, in reading order.
         void Flush()
         {
-            if (segLeft.Count > 0 && segRight.Count > 0)
+            if (segLeft.Count >= 2 && segRight.Count >= 2)
                 blocks.Add(new LayoutBlock([.. segLeft, .. segRight], segLeft.ToList(), segRight.ToList()));
             else if (segLeft.Count + segRight.Count > 0)
-                blocks.Add(new LayoutBlock(segLeft.Concat(segRight).ToList()));
+                blocks.Add(new LayoutBlock(segLeft.Concat(segRight).OrderBy(l => l.TopY).ToList()));
             segLeft.Clear();
             segRight.Clear();
         }

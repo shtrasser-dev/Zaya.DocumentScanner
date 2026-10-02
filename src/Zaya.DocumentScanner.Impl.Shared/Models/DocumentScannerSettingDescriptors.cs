@@ -19,6 +19,7 @@ public static class DocumentScannerSettingDescriptors
     public const string MissingFrameGrace = SettingsConstants.MissingFrameGrace;
     public const string WordGapThresholdPercent = SettingsConstants.WordGapThresholdPercent;
     public const string MaxWordAngleDeviationDegrees = SettingsConstants.MaxWordAngleDeviationDegrees;
+    public const string RespectOcrLines = SettingsConstants.RespectOcrLines;
     public const string LayoutTolerancePercent = SettingsConstants.LayoutTolerancePercent;
     public const string FontSizeMinPt = SettingsConstants.FontSizeMinPt;
     public const string FontSizeMaxPt = SettingsConstants.FontSizeMaxPt;
@@ -79,6 +80,14 @@ public static class DocumentScannerSettingDescriptors
             DefaultValue = 30,
             MinValue = 0,
             MaxValue = 180,
+        },
+        new BooleanSettingDescriptor(RespectOcrLines, LocalizedString.Invariant("Учитывать строки OCR"))
+        {
+            Description = LocalizedString.Invariant(
+                "Не склеивать в одну строку слова, которые движок OCR сам отнёс к разным строкам (например, " +
+                "соседние ячейки таблицы с узким промежутком между ними). Широкий порог склейки слов выше нужен " +
+                "для пар «метка — значение», но без этой проверки он перекидывает слова через границу ячейки."),
+            DefaultValue = true,
         },
         new IntegerSettingDescriptor(LayoutTolerancePercent, LocalizedString.Invariant("Допуск разметки страницы (%)"))
         {

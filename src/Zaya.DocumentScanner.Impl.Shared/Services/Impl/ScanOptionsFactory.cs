@@ -19,6 +19,7 @@ public static class ScanOptionsFactory
             MissingFrameGrace = ds.GetValueAsInt(SettingsConstants.MissingFrameGrace),
             WordGapThresholdPercent = ds.GetValueAsInt(SettingsConstants.WordGapThresholdPercent),
             MaxWordAngleDeviationDegrees = ds.GetValueAsInt(SettingsConstants.MaxWordAngleDeviationDegrees),
+            RespectOcrLines = ds.GetValueAsBool(SettingsConstants.RespectOcrLines),
         };
     }
 

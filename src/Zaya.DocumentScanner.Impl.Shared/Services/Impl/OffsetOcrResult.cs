@@ -1,4 +1,5 @@
 using System.Numerics;
+using Zaya.OCR.Models;
 using Zaya.Primitives;
 using Zaya.Primitives.OCR;
 
@@ -9,7 +10,8 @@ namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 /// ProximityTextLayoutService links lines across calls by comparing bounds directly in whatever
 /// coordinate space it's given — this converts crop-relative bounds into absolute page
 /// coordinates so a physical line reports the same position regardless of which window it was
-/// read from.
+/// read from. The OCR engine's own line index (<see cref="IOCRWordExt"/>) is carried through
+/// unchanged, so the layout engine can still honor the engine's line boundaries.
 /// </summary>
 public sealed class OffsetOcrResult : IOCRResult
 {
@@ -23,12 +25,13 @@ public sealed class OffsetOcrResult : IOCRResult
     public double Confidence { get; }
 }
 
-file sealed class OffsetOcrWord : IOCRWord
+file sealed class OffsetOcrWord : IOCRWord, IOCRWordExt
 {
     public OffsetOcrWord(IOCRWord inner, Vector2 offset)
     {
         Text = inner.Text;
         Confidence = inner.Confidence;
+        LineIndex = (inner as IOCRWordExt)?.LineIndex;
         Bounds = new BoundingBox(
             inner.Bounds.P1 + offset,
             inner.Bounds.P2 + offset,
@@ -39,4 +42,5 @@ file sealed class OffsetOcrWord : IOCRWord
     public string Text { get; }
     public BoundingBox Bounds { get; }
     public double Confidence { get; }
+    public int? LineIndex { get; }
 }

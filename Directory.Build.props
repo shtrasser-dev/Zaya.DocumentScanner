@@ -4,10 +4,10 @@
     <ZayaPrimitivesMajor>$([System.Version]::Parse('$(ZayaPrimitivesVersion)').Major)</ZayaPrimitivesMajor>
 
     <ZayaLoggingVersion>1.0.0</ZayaLoggingVersion>
-    <ZayaOcrVersion>2.0.0</ZayaOcrVersion>
+    <ZayaOcrVersion>2.1.0</ZayaOcrVersion>
 
     <!-- Host app default when ZayaVersionRole is unset. -->
-    <ZayaHostVersionMinor>0</ZayaHostVersionMinor>
+    <ZayaHostVersionMinor>1</ZayaHostVersionMinor>
     <ZayaHostVersionPatch>0</ZayaHostVersionPatch>
   </PropertyGroup>
 </Project>
