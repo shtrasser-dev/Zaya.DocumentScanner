@@ -205,6 +205,25 @@ public sealed class DocumentScanService : IDocumentScanService
     /// </summary>
     private static IReadOnlyList<ScannedLine> Dedupe(List<TrackedLine> committed)
     {
+        // While tracking, TopY follows wherever this Id was seen last - needed for eviction, but
+        // an Id the layout engine re-linked to a neighboring line can end up there while its
+        // stored (longest) reading is of a different spot (a clinic logo's rail carried over to
+        // the "Пол: Мужской" line beside it put that reading 40px too high, above "Возраст").
+        // Only such a line - one whose kept words sit clearly away from its TopY - is moved to
+        // where its words are; every other line keeps its rail-based TopY, which paragraph
+        // grouping's gap thresholds are tuned against.
+        foreach (var line in committed.Where(l => l.Words.Count > 0))
+        {
+            var wordsTop = line.Words.Min(w => w.MinY);
+            var wordHeight = MathHelpers.Median(line.Words.Select(w => w.TextHeight).ToList());
+            if (Math.Abs(wordsTop - line.TopY) > wordHeight)
+            {
+                line.TopY = wordsTop;
+                line.MinX = line.Words.Min(w => w.MinX);
+                line.MaxX = line.Words.Max(w => w.MaxX);
+            }
+        }
+
         var ordered = committed.OrderBy(l => l.TopY).ToList();
 
         var deduped = new List<TrackedLine>();
@@ -214,22 +233,33 @@ public sealed class DocumentScanService : IDocumentScanService
             if (text.Length == 0)
                 continue;
 
-            if (deduped.Count > 0)
+            // Not just the last kept line: another line can sit between two readings of the same
+            // one in Y order (a neighboring column's line at nearly the same height, or a
+            // slightly mispositioned reading), so check every kept line still within the
+            // same-position Y window.
+            var duplicateOf = -1;
+            for (var i = deduped.Count - 1; i >= 0 && line.TopY - deduped[i].TopY < SamePositionMaxDy; i--)
             {
-                var prev = deduped[^1];
-                var prevText = prev.Text.Trim();
-                var samePosition = IsSamePosition(line, prev);
+                var prevText = deduped[i].Text.Trim();
                 var overlapsText = text.Contains(prevText, StringComparison.Ordinal)
                     || prevText.Contains(text, StringComparison.Ordinal);
-                if (samePosition && (overlapsText || IsNearDuplicate(text, prevText)))
+                if (IsSamePosition(line, deduped[i]) && (overlapsText || IsNearDuplicate(text, prevText)))
                 {
-                    var preferCurrent = text.Length != prevText.Length
-                        ? text.Length > prevText.Length
-                        : line.FrameCount > prev.FrameCount;
-                    if (preferCurrent)
-                        deduped[^1] = line;
-                    continue;
+                    duplicateOf = i;
+                    break;
                 }
+            }
+
+            if (duplicateOf >= 0)
+            {
+                var prev = deduped[duplicateOf];
+                var prevText = prev.Text.Trim();
+                var preferCurrent = text.Length != prevText.Length
+                    ? text.Length > prevText.Length
+                    : line.FrameCount > prev.FrameCount;
+                if (preferCurrent)
+                    deduped[duplicateOf] = line;
+                continue;
             }
 
             deduped.Add(line);
@@ -246,9 +276,12 @@ public sealed class DocumentScanService : IDocumentScanService
     /// narrower one's width. Y-proximity alone isn't enough: two genuinely different lines (e.g.
     /// side-by-side columns) can sit at the same height without being the same line at all.
     /// </summary>
+    /// <summary>Roughly one text line's height, in px.</summary>
+    private const float SamePositionMaxDy = 60;
+
     private static bool IsSamePosition(TrackedLine a, TrackedLine b)
     {
-        if (a.TopY - b.TopY >= 60) // roughly one text line's height
+        if (Math.Abs(a.TopY - b.TopY) >= SamePositionMaxDy)
             return false;
 
         var overlapX = Math.Min(a.MaxX, b.MaxX) - Math.Max(a.MinX, b.MinX);
