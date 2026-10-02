@@ -153,8 +153,11 @@ public static class RotatedTextClusterer
 
             var angle = (float)Median(words.Select(w => (double)w.AngleDegrees).ToList());
             var text = string.Join(" ", ordered.Select(w => w.Text));
+            var wordHeights = words.Select(w => w.MaxY - w.MinY).Where(h => h > 0).ToList();
+            var typicalWordHeight = wordHeights.Count > 0 ? Median(wordHeights) : 20f;
 
-            clusters.Add(new RotatedTextCluster(text, centerX, centerY, maxX - minX, maxY - minY, angle));
+            clusters.Add(new RotatedTextCluster(
+                text, centerX, centerY, maxX - minX, maxY - minY, angle, typicalWordHeight));
         }
 
         return clusters;

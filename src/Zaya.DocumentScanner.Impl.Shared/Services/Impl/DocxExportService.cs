@@ -126,16 +126,37 @@ public sealed class DocxExportService : IDocxExportService
         var paragraph = new Paragraph();
         foreach (var cluster in clusters)
         {
-            var widthPt = Math.Max(20.0, cluster.Width / pixelsPerPoint);
-            var heightPt = Math.Max(10.0, cluster.Height / pixelsPerPoint);
+            // The font size has to come from an individual word's own height, not the cluster's
+            // overall bounding box height - that reflects how far the words are spread around
+            // (e.g. a stamp's diameter), not any single glyph's size. Using it directly earlier
+            // produced font sizes several times too large for the box.
+            var fontSizePt = Math.Clamp(cluster.TypicalWordHeightPx / pixelsPerPoint, options.FontSizeMinPt, options.FontSizeMaxPt);
+            var fontHalfPoints = ((int)Math.Round(fontSizePt * 2)).ToString();
+
             var leftPt = marginPt + (cluster.CenterX - cluster.Width / 2f - leftMarginPx) / pixelsPerPoint;
             var topPt = marginPt + (cluster.CenterY - cluster.Height / 2f - topMarginPx) / pixelsPerPoint;
 
-            // Sized off the cluster's own height, same spirit as EstimateFontSizePoints for
-            // ordinary text - a tall cluster (big stamp) gets bigger text than a small one.
-            var fontSizePt = Math.Clamp(heightPt * 0.5, options.FontSizeMinPt, options.FontSizeMaxPt);
-            var fontHalfPoints = ((int)Math.Round(fontSizePt * 2)).ToString();
+            // Start from the cluster's own spatial footprint (keeps the block roughly where/how
+            // big the stamp itself was), but that footprint is about where the circle's words
+            // ARE, not how much room their text needs once laid out as ordinary wrapped lines -
+            // those can be very different for text that was originally arranged in a circle. Grow
+            // the box height (not width - keep it visually compact) if a rough estimate says the
+            // text wouldn't fit, computed here rather than left to Word's own auto-fit: auto-fit
+            // combined with rotation was the likely cause of text rendering unrotated while the
+            // shape's own outline still showed rotated (see this method's own notes below).
+            var widthPt = Math.Max(30.0, cluster.Width / pixelsPerPoint);
+            var avgCharWidthPt = fontSizePt * 0.55;
+            var charsPerLine = Math.Max(1, (int)(widthPt / avgCharWidthPt));
+            var linesNeeded = Math.Max(1, (int)Math.Ceiling((double)cluster.Text.Length / charsPerLine));
+            var estimatedHeightPt = linesNeeded * fontSizePt * 1.3;
+            var heightPt = Math.Max(Math.Max(10.0, cluster.Height / pixelsPerPoint), estimatedHeightPt);
 
+            // Fixed size, no "mso-fit-shape-to-text" - that auto-fit, combined with an explicit
+            // rotation, was reproducibly rendering the shape's outline rotated but its text
+            // content NOT rotated (a real Word rendering bug/quirk, not a guess - seen directly in
+            // a generated document). A plain VML textbox without auto-fit doesn't clip overflow by
+            // default, so a slightly-too-small estimate here still shows all the text, just
+            // extending past the drawn box rather than losing anything.
             var style = string.Format(
                 CultureInfo.InvariantCulture,
                 "position:absolute;margin-left:{0:F2}pt;margin-top:{1:F2}pt;width:{2:F2}pt;height:{3:F2}pt;" +
@@ -157,7 +178,7 @@ public sealed class DocxExportService : IDocxExportService
                     new FontSize { Val = fontHalfPoints }));
             textRun.Append(new Text(cluster.Text) { Space = SpaceProcessingModeValues.Preserve });
 
-            var textBox = new TextBox { Style = "mso-fit-shape-to-text:t", Inset = "0,0,0,0" };
+            var textBox = new TextBox { Inset = "0,0,0,0" };
             textBox.Append(new TextBoxContent(new Paragraph(textRun)));
             shape.Append(textBox);
 

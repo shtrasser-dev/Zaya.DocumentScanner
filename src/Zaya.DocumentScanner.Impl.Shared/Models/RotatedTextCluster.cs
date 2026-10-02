@@ -10,8 +10,16 @@ namespace Zaya.DocumentScanner.Impl.Shared.Models;
 /// <param name="Text">Member words joined in roughly the order they'd be read around the cluster.</param>
 /// <param name="CenterX">Horizontal center of the cluster's bounding box, in source page pixels.</param>
 /// <param name="CenterY">Vertical center of the cluster's bounding box, in source page pixels.</param>
-/// <param name="Width">Bounding box width, in source page pixels.</param>
-/// <param name="Height">Bounding box height, in source page pixels.</param>
+/// <param name="Width">Bounding box width, in source page pixels. This is the cluster's spatial
+/// footprint (how far its words are spread around, e.g. a stamp's diameter) - NOT how much space
+/// the text needs once laid out in an ordinary wrapped text box; those can differ a lot for text
+/// that was originally arranged in a circle, so this is a starting point for the export box size,
+/// not the final one.</param>
+/// <param name="Height">Bounding box height, in source page pixels. Same caveat as <see cref="Width"/>.</param>
 /// <param name="AngleDegrees">Representative rotation of the cluster's text, in degrees.</param>
+/// <param name="TypicalWordHeightPx">Median height of the cluster's own member words, in source
+/// page pixels - the right basis for the exported font size, unlike <see cref="Height"/> (which
+/// reflects the cluster's spatial spread, not any single glyph's size).</param>
 public sealed record RotatedTextCluster(
-    string Text, float CenterX, float CenterY, float Width, float Height, float AngleDegrees);
+    string Text, float CenterX, float CenterY, float Width, float Height, float AngleDegrees,
+    float TypicalWordHeightPx);
