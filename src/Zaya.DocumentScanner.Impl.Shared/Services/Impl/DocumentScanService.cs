@@ -26,8 +26,25 @@ public sealed class DocumentScanService : IDocumentScanService
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var windowHeight = options.WindowHeight ?? Math.Max(1, page.Height / 4);
         var inkThreshold = InkDensityEstimator.ComputePageInkThreshold(page);
+
+        using var ocrSession = ocrSettings is { Count: > 0 }
+            ? await _ocr.CreateSessionAsync(ocrSettings, cancellationToken).ConfigureAwait(false)
+            : await _ocr.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
+        // One quick OCR pass over the whole page (padded, so nothing sits at an edge) before the
+        // sliding scan: it measures the page's line pitch for the window size, and since it's the
+        // one frame that sees a rotated stamp whole, its rotated words are added to the stamp
+        // observations too (no extra cost - the pass is needed for the window size anyway).
+        var wholePage = await RecognizeWholePageAsync(ocrSession, page, cancellationToken).ConfigureAwait(false);
+        // Window height and step are both in units of this page's own line pitch: on a test set
+        // the best window was ~6-10 lines whatever the text size, and stepping 2 lines per frame
+        // matched 15px stepping in quality at 3-4x the speed (quality held up to ~3 lines; half a
+        // line was worse - each line passed through so many frames that its readings fragmented).
+        var pitch = EstimateLinePitch(wholePage);
+        var windowHeight = options.WindowHeight
+            ?? (pitch is { } p ? Math.Clamp((int)Math.Round(options.WindowLines * p), 48, page.Height + 2 * WholePagePad) : Math.Max(1, page.Height / 4));
+        var step = pitch is { } q ? Math.Max(1, (int)Math.Round(q * options.StepPercentOfLine / 100.0)) : FallbackStepPx;
 
         // A line sitting right at the very top or bottom of the real page would otherwise never
         // get a window position clear of both edges - the window can't start before row 0 or end
@@ -36,10 +53,6 @@ public sealed class DocumentScanService : IDocumentScanService
         // the real page, giving every line - including ones at the very edge of the content -
         // the same kind of safe, centered pass that an interior line gets for free.
         var padding = windowHeight / 2;
-
-        using var ocrSession = ocrSettings is { Count: > 0 }
-            ? await _ocr.CreateSessionAsync(ocrSettings, cancellationToken).ConfigureAwait(false)
-            : await _ocr.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         // The window-slide step splits genuinely wide gaps (label/value lists) unusually far
         // apart, so scanning always needs its own wordGapThreshold regardless of whatever the
@@ -56,7 +69,14 @@ public sealed class DocumentScanService : IDocumentScanService
         var committed = new List<TrackedLine>();
         var rotatedObservations = new RotatedTextClusterer.ObservationSet();
 
-        for (var y = -padding; y + windowHeight <= page.Height + padding; y += options.Step)
+        var (_, wholePageRotated) = RotatedTextClusterer.SplitByAngle(wholePage.Words, options.MaxWordAngleDeviationDegrees);
+        if (wholePageRotated.Count > 0)
+        {
+            var offset = new OffsetOcrResult(wholePageRotated, wholePage.Confidence, new Vector2(0, -WholePagePad));
+            rotatedObservations.Add(offset.Words, -WholePagePad, page.Height + 2 * WholePagePad);
+        }
+
+        for (var y = -padding; y + windowHeight <= page.Height + padding; y += step)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -254,7 +274,26 @@ public sealed class DocumentScanService : IDocumentScanService
                     duplicateOf = i;
                     break;
                 }
+
+                // A one- or two-character line sitting on top of a word of another line is a
+                // fragment of that word read in some frame as a line of its own - often with a
+                // different glyph ("V" for the "У" of "У реки..."), so no text test can catch it.
+                if (IsFragmentOf(line, deduped[i]))
+                {
+                    duplicateOf = i;
+                    break;
+                }
+
+                if (IsFragmentOf(deduped[i], line))
+                {
+                    deduped[i] = line;
+                    duplicateOf = -2;
+                    break;
+                }
             }
+
+            if (duplicateOf == -2)
+                continue;
 
             if (duplicateOf >= 0)
             {
@@ -276,12 +315,70 @@ public sealed class DocumentScanService : IDocumentScanService
             .ToList();
     }
 
+    /// <summary>Scan step when the page has no text to measure a line pitch from.</summary>
+    private const int FallbackStepPx = 15;
+
     /// <summary>
-    /// True when two lines plausibly occupy the same physical spot on the page - close in Y
-    /// (roughly one text line's height) AND overlapping in X by a meaningful fraction of the
-    /// narrower one's width. Y-proximity alone isn't enough: two genuinely different lines (e.g.
-    /// side-by-side columns) can sit at the same height without being the same line at all.
+    /// This page's line pitch in px, measured from one quick OCR pass over the whole page (about a
+    /// second - a small fraction of the scan itself), or null when it has no text. A fixed
+    /// fraction of the page height is the wrong unit for the scan window: on a test set the best
+    /// fraction for a low-resolution form with ~15px lines (1/12) left a homework sheet with ~40px
+    /// lines only two or three lines per window, which produced duplicate readings, while the old
+    /// default (1/4) was both slower and less accurate on small text.
+    /// <para/>
+    /// The pitch is the median vertical distance from each OCR line to the nearest line below it
+    /// that overlaps it horizontally (so side-by-side columns don't count as neighbors), with line
+    /// membership taken from the OCR engine's own line index when it reports one. Falls back to
+    /// 1.6x the median word height.
     /// </summary>
+    private static float? EstimateLinePitch(Zaya.Primitives.OCR.IOCRResult result)
+    {
+        if (result.Words.Count == 0)
+            return null;
+
+        var wordHeight = MathHelpers.Median(result.Words
+            .Select(w => (Vector2.Distance(w.Bounds.P1, w.Bounds.P4) + Vector2.Distance(w.Bounds.P2, w.Bounds.P3)) / 2f)
+            .ToList());
+
+        var ocrLines = result.Words
+            .Select((w, i) => (Word: w, Key: (w as Zaya.OCR.Models.IOCRWordExt)?.LineIndex ?? -1 - i))
+            .GroupBy(x => x.Key)
+            .Select(g => (
+                CenterY: g.Average(x => (x.Word.Bounds.MinY + x.Word.Bounds.MaxY) / 2f),
+                MinX: g.Min(x => x.Word.Bounds.MinX),
+                MaxX: g.Max(x => x.Word.Bounds.MaxX)))
+            .OrderBy(l => l.CenterY)
+            .ToList();
+
+        var gaps = new List<float>();
+        for (var i = 0; i < ocrLines.Count; i++)
+        {
+            for (var j = i + 1; j < ocrLines.Count; j++)
+            {
+                var dy = ocrLines[j].CenterY - ocrLines[i].CenterY;
+                if (dy < 0.5f * wordHeight)
+                    continue;
+                if (Math.Min(ocrLines[i].MaxX, ocrLines[j].MaxX) <= Math.Max(ocrLines[i].MinX, ocrLines[j].MinX))
+                    continue;
+                gaps.Add(dy);
+                break;
+            }
+        }
+
+        return gaps.Count > 0 ? MathHelpers.Median(gaps) : 1.6f * wordHeight;
+    }
+
+    /// <summary>Blank rows added above and below the page for the whole-page pass.</summary>
+    private const int WholePagePad = 32;
+
+    /// <summary>OCR of the whole page in one frame, padded by <see cref="WholePagePad"/> (coordinates are crop-relative).</summary>
+    private static async Task<Zaya.Primitives.OCR.IOCRResult> RecognizeWholePageAsync(
+        Zaya.OCR.Services.IOCRSession ocrSession, IRawImage page, CancellationToken cancellationToken)
+    {
+        using var crop = RawImageCropper.CropRowsPadded(page, -WholePagePad, page.Height + 2 * WholePagePad);
+        return await ocrSession.RecognizeAsync(crop, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Drops words of ordinary lines that are just a stray copy of rotated-block text: the word's
     /// center lies inside the block's own rotated box and its text already appears in the block's
@@ -325,9 +422,33 @@ public sealed class DocumentScanService : IDocumentScanService
             && Math.Abs(Vector2.Dot(center, normal)) <= cluster.Height * 0.6f;
     }
 
+    /// <summary>
+    /// True when <paramref name="fragment"/> is at most two characters long and its center lies
+    /// inside one of <paramref name="line"/>'s own word boxes. A real short line - a form value
+    /// like "ж" beside its label, a list number like "1." - sits next to other text, not on top of
+    /// one of its words, so it isn't touched.
+    /// </summary>
+    private static bool IsFragmentOf(TrackedLine fragment, TrackedLine line)
+    {
+        if (ReferenceEquals(fragment, line) || fragment.Words.Count == 0 || line.Words.Count == 0)
+            return false;
+        if (fragment.Text.Count(c => !char.IsWhiteSpace(c)) > 2 || line.Text.Trim().Length <= fragment.Text.Trim().Length)
+            return false;
+
+        var cx = (fragment.Words.Min(w => w.MinX) + fragment.Words.Max(w => w.MaxX)) / 2f;
+        var cy = (fragment.Words.Min(w => w.MinY) + fragment.Words.Max(w => w.MaxY)) / 2f;
+        return line.Words.Any(w => cx >= w.MinX && cx <= w.MaxX && cy >= w.MinY && cy <= w.MaxY);
+    }
+
     /// <summary>Roughly one text line's height, in px.</summary>
     private const float SamePositionMaxDy = 60;
 
+    /// <summary>
+    /// True when two lines plausibly occupy the same physical spot on the page - close in Y
+    /// (roughly one text line's height) AND overlapping in X by a meaningful fraction of the
+    /// narrower one's width. Y-proximity alone isn't enough: two genuinely different lines (e.g.
+    /// side-by-side columns) can sit at the same height without being the same line at all.
+    /// </summary>
     private static bool IsSamePosition(TrackedLine a, TrackedLine b)
     {
         if (Math.Abs(a.TopY - b.TopY) >= SamePositionMaxDy)

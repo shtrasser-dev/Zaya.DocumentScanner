@@ -14,12 +14,13 @@ public static class ScanOptionsFactory
 
         return new DocumentScanOptions
         {
-            Step = ds.GetValueAsInt(SettingsConstants.Step),
+            StepPercentOfLine = ds.GetValueAsInt(SettingsConstants.StepPercentOfLine),
             MarginMultiplier = ds.GetValueAsInt(SettingsConstants.MarginMultiplierPercent) / 100f,
             MissingFrameGrace = ds.GetValueAsInt(SettingsConstants.MissingFrameGrace),
             WordGapThresholdPercent = ds.GetValueAsInt(SettingsConstants.WordGapThresholdPercent),
             MaxWordAngleDeviationDegrees = ds.GetValueAsInt(SettingsConstants.MaxWordAngleDeviationDegrees),
             RespectOcrLines = ds.GetValueAsBool(SettingsConstants.RespectOcrLines),
+            WindowLines = ds.GetValueAsInt(SettingsConstants.WindowLines),
         };
     }
 

@@ -14,12 +14,13 @@ public static class DocumentScannerSettingDescriptors
     public const string DsKey = SettingsConstants.DsKey;
 
     public const string ProfileName = SettingsConstants.ProfileName;
-    public const string Step = SettingsConstants.Step;
+    public const string StepPercentOfLine = SettingsConstants.StepPercentOfLine;
     public const string MarginMultiplierPercent = SettingsConstants.MarginMultiplierPercent;
     public const string MissingFrameGrace = SettingsConstants.MissingFrameGrace;
     public const string WordGapThresholdPercent = SettingsConstants.WordGapThresholdPercent;
     public const string MaxWordAngleDeviationDegrees = SettingsConstants.MaxWordAngleDeviationDegrees;
     public const string RespectOcrLines = SettingsConstants.RespectOcrLines;
+    public const string WindowLines = SettingsConstants.WindowLines;
     public const string LayoutTolerancePercent = SettingsConstants.LayoutTolerancePercent;
     public const string FontSizeMinPt = SettingsConstants.FontSizeMinPt;
     public const string FontSizeMaxPt = SettingsConstants.FontSizeMaxPt;
@@ -36,13 +37,25 @@ public static class DocumentScannerSettingDescriptors
             DefaultValue = SettingsConstants.EngineDefaults.ProfileName,
         },
 
-        new IntegerSettingDescriptor(Step, LocalizedString.Invariant("Шаг окна распознавания (px)"))
+        new IntegerSettingDescriptor(WindowLines, LocalizedString.Invariant("Высота окна распознавания (строк)"))
         {
             Description = LocalizedString.Invariant(
-                "Насколько сдвигается окно распознавания вниз между кадрами. Меньше — точнее, но дольше."),
-            DefaultValue = 15,
-            MinValue = 1,
-            MaxValue = 200,
+                "Сколько строк текста помещается в окно распознавания. Высота строки определяется по " +
+                "быстрому предварительному проходу по всей странице, поэтому окно подстраивается под " +
+                "размер шрифта. Слишком мало строк даёт дубли, слишком много — медленнее и хуже на мелком тексте."),
+            DefaultValue = 8,
+            MinValue = 3,
+            MaxValue = 40,
+        },
+        new IntegerSettingDescriptor(StepPercentOfLine, LocalizedString.Invariant("Шаг окна распознавания (% от высоты строки)"))
+        {
+            Description = LocalizedString.Invariant(
+                "Насколько сдвигается окно распознавания вниз между кадрами, в процентах от расстояния между " +
+                "строками этой страницы. 200 — на две строки: на тестах так же точно, как мелкий шаг, но в 3–4 раза " +
+                "быстрее. Слишком мелкий шаг (меньше строки) не точнее, а иногда даёт дубли."),
+            DefaultValue = 200,
+            MinValue = 10,
+            MaxValue = 400,
         },
         new IntegerSettingDescriptor(MarginMultiplierPercent, LocalizedString.Invariant("Отступ от края окна (%)"))
         {

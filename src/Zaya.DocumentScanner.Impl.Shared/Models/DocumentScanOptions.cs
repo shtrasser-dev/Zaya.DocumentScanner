@@ -7,10 +7,24 @@ namespace Zaya.DocumentScanner.Impl.Shared.Models;
 /// </summary>
 public sealed class DocumentScanOptions
 {
-    /// <summary>Recognition window height in px. Null defaults to a quarter of the page height.</summary>
+    /// <summary>Recognition window height in px. Null derives it from <see cref="WindowLines"/> (see DocumentScanService).</summary>
     public int? WindowHeight { get; init; }
 
-    public int Step { get; init; } = 15;
+    /// <summary>
+    /// Window height in text lines of this page (its own line pitch, measured by a quick
+    /// full-page OCR pass), used when <see cref="WindowHeight"/> isn't set. ~6-10 lines did best
+    /// across pages with very different text sizes; too few gave duplicate readings, too many
+    /// was slower and less accurate on small text.
+    /// </summary>
+    public int WindowLines { get; init; } = 8;
+
+    /// <summary>
+    /// How far the window moves down per frame, in percent of this page's line pitch (200 = two
+    /// lines). On a test set 200% matched the old fixed 15px step in quality at 3-4x the speed,
+    /// quality held up to ~300%, and steps under one line were no better - sometimes worse, as
+    /// each line passed through so many frames that its readings fragmented into duplicates.
+    /// </summary>
+    public int StepPercentOfLine { get; init; } = 200;
 
     /// <summary>
     /// Words within this many multiples of the frame's own median text height from the
