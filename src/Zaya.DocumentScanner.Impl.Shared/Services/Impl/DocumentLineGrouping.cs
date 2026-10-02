@@ -234,6 +234,63 @@ public static class DocumentLineGrouping
     }
 
     /// <summary>
+    /// One piece of a paragraph group, in reading order: either ordinary lines, or a two-column
+    /// stretch (<see cref="Left"/>/<see cref="Right"/> non-null) rendered side by side.
+    /// </summary>
+    public sealed record LayoutBlock(
+        IReadOnlyList<ScannedLine> Lines, IReadOnlyList<ScannedLine>? Left = null, IReadOnlyList<ScannedLine>? Right = null)
+    {
+        public bool IsColumns => Left is not null && Right is not null;
+    }
+
+    /// <summary>
+    /// Splits a paragraph group into blocks in reading order (see <see cref="TryDetectTwoColumns"/>).
+    /// A line that straddles both columns - typically two neighboring table cells OCR merged into
+    /// one line - can't go in either column, so it ends the current two-column stretch and stays
+    /// where it is, between that stretch and the next one. Moving such lines before/after the whole
+    /// two-column block instead (as was done earlier) put a merged row from the middle of a table
+    /// below every later row on a real scan.
+    /// </summary>
+    public static List<LayoutBlock> SplitIntoBlocks(IReadOnlyList<ScannedLine> group)
+    {
+        if (!TryDetectTwoColumns(group, out var left, out var right, out _))
+            return [new LayoutBlock(group)];
+
+        var leftSet = left.ToHashSet(ReferenceEqualityComparer.Instance);
+        var rightSet = right.ToHashSet(ReferenceEqualityComparer.Instance);
+
+        var blocks = new List<LayoutBlock>();
+        var segLeft = new List<ScannedLine>();
+        var segRight = new List<ScannedLine>();
+
+        void Flush()
+        {
+            if (segLeft.Count > 0 && segRight.Count > 0)
+                blocks.Add(new LayoutBlock([.. segLeft, .. segRight], segLeft.ToList(), segRight.ToList()));
+            else if (segLeft.Count + segRight.Count > 0)
+                blocks.Add(new LayoutBlock(segLeft.Concat(segRight).ToList()));
+            segLeft.Clear();
+            segRight.Clear();
+        }
+
+        foreach (var line in group)
+        {
+            if (leftSet.Contains(line))
+                segLeft.Add(line);
+            else if (rightSet.Contains(line))
+                segRight.Add(line);
+            else
+            {
+                Flush();
+                blocks.Add(new LayoutBlock([line]));
+            }
+        }
+
+        Flush();
+        return blocks;
+    }
+
+    /// <summary>
     /// Classifies one sentence unit's alignment (usually a single line, occasionally several
     /// merged by word-wrap — see <see cref="SplitIntoSentenceUnits"/>) by comparing its own extent
     /// against the document's overall text margins. Left/Right when it touches the corresponding

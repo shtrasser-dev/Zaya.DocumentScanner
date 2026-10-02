@@ -40,28 +40,19 @@ public static class DocumentPreviewBuilder
         if (paragraphs.Count > 0)
         {
             var pixelsPerPoint = PageLayoutEstimator.EstimatePixelsPerPoint(lines, options.PageSize, options.PageMarginMm);
-            var fitScale = PageFitScaler.EstimateScale(lines, page, pixelsPerPoint, options);
+            var fontSizes = FontSizeEstimator.Estimate(lines, pixelsPerPoint, options.FontSizeMinPt, options.FontSizeMaxPt);
+            var fitScale = PageFitScaler.EstimateScale(lines, page, fontSizes, options);
             var leftMargin = PageLayoutEstimator.EstimateLeftMargin(lines);
             var rightMargin = PageLayoutEstimator.EstimateRightMargin(lines);
             var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * (options.LayoutTolerancePercent / 100f);
             var boldThreshold = PageLayoutEstimator.EstimateBoldDensityThreshold(lines);
 
-            foreach (var paragraphLines in paragraphs)
+            foreach (var block in paragraphs.SelectMany(DocumentLineGrouping.SplitIntoBlocks))
             {
-                if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
-                {
-                    AppendAligned(body, paragraphLines, pixelsPerPoint, fitScale, leftMargin, rightMargin, tolerance, boldThreshold, options, scale);
-                    continue;
-                }
-
-                var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
-                foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                    AppendAligned(body, [line], pixelsPerPoint, fitScale, leftMargin, rightMargin, tolerance, boldThreshold, options, scale);
-
-                body.Children.Add(BuildColumnsGrid(left, right, page, pixelsPerPoint, fitScale, rightMargin, tolerance, boldThreshold, options, scale));
-
-                foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                    AppendAligned(body, [line], pixelsPerPoint, fitScale, leftMargin, rightMargin, tolerance, boldThreshold, options, scale);
+                if (block.IsColumns)
+                    body.Children.Add(BuildColumnsGrid(block.Left!.ToList(), block.Right!.ToList(), page, fontSizes, fitScale, rightMargin, tolerance, boldThreshold, options, scale));
+                else
+                    AppendAligned(body, block.Lines, fontSizes, fitScale, leftMargin, rightMargin, tolerance, boldThreshold, options, scale);
             }
         }
 
@@ -110,15 +101,15 @@ public static class DocumentPreviewBuilder
     }
 
     private static void AppendAligned(
-        StackPanel body, IReadOnlyList<ScannedLine> groupLines, double pixelsPerPoint, double fitScale,
+        StackPanel body, IReadOnlyList<ScannedLine> groupLines, PageFontSizes fontSizes, double fitScale,
         float leftMargin, float rightMargin, float tolerance, double boldThreshold, DocxExportOptions options, double scale)
     {
         foreach (var (alignment, units) in DocumentLineGrouping.SplitByAlignment(groupLines, leftMargin, rightMargin, tolerance))
-            body.Children.Add(BuildParagraphBlock(units, pixelsPerPoint, fitScale, alignment, boldThreshold, options, scale));
+            body.Children.Add(BuildParagraphBlock(units, fontSizes, fitScale, alignment, boldThreshold, options, scale));
     }
 
     private static Grid BuildColumnsGrid(
-        List<ScannedLine> left, List<ScannedLine> right, PageMetrics page, double pixelsPerPoint, double fitScale,
+        List<ScannedLine> left, List<ScannedLine> right, PageMetrics page, PageFontSizes fontSizes, double fitScale,
         float rightMargin, float rightMarginTolerance, double boldThreshold, DocxExportOptions options, double scale)
     {
         var splitX = (left.Max(l => l.MaxX) + right.Min(l => l.MinX)) / 2.0;
@@ -131,8 +122,8 @@ public static class DocumentPreviewBuilder
         var leftUnits = DocumentLineGrouping.SplitIntoSentenceUnits(left, rightMargin, rightMarginTolerance);
         var rightUnits = DocumentLineGrouping.SplitIntoSentenceUnits(right, rightMargin, rightMarginTolerance);
 
-        var leftBlock = BuildParagraphBlock(leftUnits, pixelsPerPoint, fitScale, LineAlignment.Left, boldThreshold, options, scale);
-        var rightBlock = BuildParagraphBlock(rightUnits, pixelsPerPoint, fitScale, LineAlignment.Left, boldThreshold, options, scale);
+        var leftBlock = BuildParagraphBlock(leftUnits, fontSizes, fitScale, LineAlignment.Left, boldThreshold, options, scale);
+        var rightBlock = BuildParagraphBlock(rightUnits, fontSizes, fitScale, LineAlignment.Left, boldThreshold, options, scale);
         Grid.SetColumn(rightBlock, 1);
 
         grid.Children.Add(leftBlock);
@@ -141,12 +132,16 @@ public static class DocumentPreviewBuilder
     }
 
     private static TextBlock BuildParagraphBlock(
-        List<DocumentLineGrouping.SentenceUnit> units, double pixelsPerPoint, double fitScale, LineAlignment alignment,
+        List<DocumentLineGrouping.SentenceUnit> units, PageFontSizes fontSizes, double fitScale, LineAlignment alignment,
         double boldThreshold, DocxExportOptions options, double scale)
     {
-        var allLines = units.SelectMany(u => u.Lines).ToList();
-        var baseFontSizePt = PageLayoutEstimator.EstimateFontSizePoints(allLines, pixelsPerPoint, options.FontSizeMinPt, options.FontSizeMaxPt);
-        var fontSizePt = Math.Max(options.FontSizeMinPt, baseFontSizePt * fitScale);
+        // Per-word sizes, same as DocxExportService.BuildParagraph; the block's own size (and exact
+        // line height) is the largest of them.
+        double TargetPt(ScannedWord w) => Math.Max(options.FontSizeMinPt, fontSizes.ForWord(w) * fitScale);
+        var allWords = units.SelectMany(u => u.Lines).SelectMany(l => l.Words).ToList();
+        var fontSizePt = allWords.Count > 0
+            ? allWords.Max(TargetPt)
+            : Math.Max(options.FontSizeMinPt, units.SelectMany(u => u.Lines).Select(fontSizes.ForLine).DefaultIfEmpty(11f).Max() * fitScale);
 
         var textBlock = new TextBlock
         {
@@ -183,6 +178,7 @@ public static class DocumentPreviewBuilder
             textBlock.Inlines!.Add(new Run((pendingSpace ? " " : "") + word.Text)
             {
                 FontWeight = isBold ? FontWeight.Bold : FontWeight.Normal,
+                FontSize = Math.Max(4, TargetPt(word) * scale),
             });
             pendingSpace = true;
         }

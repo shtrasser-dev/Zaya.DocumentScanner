@@ -32,7 +32,7 @@ public static class PageFitScaler
     private const double SafetyMargin = 0.9;
 
     public static double EstimateScale(
-        IReadOnlyList<ScannedLine> lines, PageMetrics page, double pixelsPerPoint, DocxExportOptions options)
+        IReadOnlyList<ScannedLine> lines, PageMetrics page, PageFontSizes fontSizes, DocxExportOptions options)
     {
         var paragraphs = DocumentLineGrouping.GroupIntoParagraphs(lines);
         if (paragraphs.Count == 0)
@@ -43,28 +43,21 @@ public static class PageFitScaler
         var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * (options.LayoutTolerancePercent / 100f);
 
         var totalPt = 0.0;
-        foreach (var paragraphLines in paragraphs)
+        foreach (var block in paragraphs.SelectMany(DocumentLineGrouping.SplitIntoBlocks))
         {
-            if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
+            if (!block.IsColumns)
             {
-                totalPt += EstimateGroupHeightPt(paragraphLines, pixelsPerPoint, leftMargin, rightMargin, tolerance, options);
+                totalPt += EstimateGroupHeightPt(block.Lines, fontSizes, leftMargin, rightMargin, tolerance, options);
                 continue;
             }
 
-            var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
-            foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                totalPt += EstimateGroupHeightPt([line], pixelsPerPoint, leftMargin, rightMargin, tolerance, options);
-
             // The two columns render side by side, in one table row - the row's height is the
             // taller of the two, not their sum.
-            var leftUnits = DocumentLineGrouping.SplitIntoSentenceUnits(left, rightMargin, tolerance);
-            var rightUnits = DocumentLineGrouping.SplitIntoSentenceUnits(right, rightMargin, tolerance);
+            var leftUnits = DocumentLineGrouping.SplitIntoSentenceUnits(block.Left!, rightMargin, tolerance);
+            var rightUnits = DocumentLineGrouping.SplitIntoSentenceUnits(block.Right!, rightMargin, tolerance);
             totalPt += Math.Max(
-                EstimateUnitsHeightPt(leftUnits, pixelsPerPoint, options),
-                EstimateUnitsHeightPt(rightUnits, pixelsPerPoint, options));
-
-            foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                totalPt += EstimateGroupHeightPt([line], pixelsPerPoint, leftMargin, rightMargin, tolerance, options);
+                EstimateUnitsHeightPt(leftUnits, fontSizes),
+                EstimateUnitsHeightPt(rightUnits, fontSizes));
         }
 
         var (_, pageHeightTwips) = PageSizes.Get(options.PageSize);
@@ -76,25 +69,22 @@ public static class PageFitScaler
     }
 
     private static double EstimateGroupHeightPt(
-        IReadOnlyList<ScannedLine> groupLines, double pixelsPerPoint,
+        IReadOnlyList<ScannedLine> groupLines, PageFontSizes fontSizes,
         float leftMargin, float rightMargin, float tolerance, DocxExportOptions options)
     {
         var sum = 0.0;
         foreach (var (_, units) in DocumentLineGrouping.SplitByAlignment(groupLines, leftMargin, rightMargin, tolerance))
-            sum += EstimateUnitsHeightPt(units, pixelsPerPoint, options);
+            sum += EstimateUnitsHeightPt(units, fontSizes);
         return sum;
     }
 
     private static double EstimateUnitsHeightPt(
-        List<DocumentLineGrouping.SentenceUnit> units, double pixelsPerPoint, DocxExportOptions options)
+        List<DocumentLineGrouping.SentenceUnit> units, PageFontSizes fontSizes)
     {
-        var allLines = units.SelectMany(u => u.Lines).ToList();
-        var fontSizePt = PageLayoutEstimator.EstimateFontSizePoints(allLines, pixelsPerPoint, options.FontSizeMinPt, options.FontSizeMaxPt);
         // Each sentence unit becomes one hard-broken line in the output (see BuildParagraph) - the
         // lines merged into it by word-wrap are folded back to however many lines it had originally,
         // a reasonable proxy since the width-based scale is calibrated to reproduce the source's own
         // line-wrap proportions.
-        var lineCount = units.Sum(u => u.Lines.Count);
-        return lineCount * fontSizePt * LineSpacingFactor;
+        return units.SelectMany(u => u.Lines).Sum(l => fontSizes.ForLine(l)) * LineSpacingFactor;
     }
 }

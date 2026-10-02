@@ -66,32 +66,27 @@ public sealed class DocxExportService : IDocxExportService
         }
 
         var pixelsPerPoint = PageLayoutEstimator.EstimatePixelsPerPoint(lines, options.PageSize, options.PageMarginMm);
-        var scale = PageFitScaler.EstimateScale(lines, page, pixelsPerPoint, options);
+        var fontSizes = FontSizeEstimator.Estimate(lines, pixelsPerPoint, options.FontSizeMinPt, options.FontSizeMaxPt);
+        var scale = PageFitScaler.EstimateScale(lines, page, fontSizes, options);
         var leftMargin = PageLayoutEstimator.EstimateLeftMargin(lines);
         var rightMargin = PageLayoutEstimator.EstimateRightMargin(lines);
         var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * (options.LayoutTolerancePercent / 100f);
         var boldThreshold = PageLayoutEstimator.EstimateBoldDensityThreshold(lines);
 
-        foreach (var paragraphLines in paragraphs)
+        // A letterhead-style or table stretch (e.g. clinic info left, patient info right) renders
+        // as a borderless two-cell table; any line that didn't cleanly fit either column stays an
+        // ordinary paragraph at its own place in reading order (see SplitIntoBlocks).
+        foreach (var block in paragraphs.SelectMany(DocumentLineGrouping.SplitIntoBlocks))
         {
-            if (!DocumentLineGrouping.TryDetectTwoColumns(paragraphLines, out var left, out var right, out var ambiguous))
+            if (block.IsColumns)
             {
-                AppendAlignedParagraphs(body, paragraphLines, pixelsPerPoint, scale, leftMargin, rightMargin, tolerance, boldThreshold, options);
-                continue;
+                body.Append(BuildColumnsTable(
+                    block.Left!.ToList(), block.Right!.ToList(), page.WidthPx, fontSizes, scale, rightMargin, tolerance, boldThreshold, options, marginTwips));
             }
-
-            // A letterhead-style block (e.g. clinic info left, patient info right) — render as
-            // a borderless two-cell table, with any line that didn't cleanly fit either column
-            // kept in its own ordinary paragraph before/after the table, in original reading order.
-            var tableTopY = Math.Min(left[0].TopY, right[0].TopY);
-            foreach (var line in ambiguous.Where(l => l.TopY < tableTopY))
-                AppendAlignedParagraphs(body, [line], pixelsPerPoint, scale, leftMargin, rightMargin, tolerance, boldThreshold, options);
-
-            body.Append(BuildColumnsTable(
-                left, right, page.WidthPx, pixelsPerPoint, scale, rightMargin, tolerance, boldThreshold, options, marginTwips));
-
-            foreach (var line in ambiguous.Where(l => l.TopY >= tableTopY))
-                AppendAlignedParagraphs(body, [line], pixelsPerPoint, scale, leftMargin, rightMargin, tolerance, boldThreshold, options);
+            else
+            {
+                AppendAlignedParagraphs(body, block.Lines, fontSizes, scale, leftMargin, rightMargin, tolerance, boldThreshold, options);
+            }
         }
 
         AppendRotatedClusters(body, rotatedClusters, lines, pixelsPerPoint, options, marginTwips, ref shapeIdCounter);
@@ -193,21 +188,24 @@ public sealed class DocxExportService : IDocxExportService
     /// followed by ordinary left-aligned body text) and appends one Word paragraph per run.
     /// </summary>
     private static void AppendAlignedParagraphs(
-        Body body, IReadOnlyList<ScannedLine> groupLines, double pixelsPerPoint, double scale,
+        Body body, IReadOnlyList<ScannedLine> groupLines, PageFontSizes fontSizes, double scale,
         float leftMargin, float rightMargin, float tolerance, double boldThreshold, DocxExportOptions options)
     {
         foreach (var (alignment, units) in DocumentLineGrouping.SplitByAlignment(groupLines, leftMargin, rightMargin, tolerance))
-            body.Append(BuildParagraph(units, pixelsPerPoint, scale, alignment, boldThreshold, options));
+            body.Append(BuildParagraph(units, fontSizes, scale, alignment, boldThreshold, options));
     }
 
     private static Paragraph BuildParagraph(
-        List<DocumentLineGrouping.SentenceUnit> units, double pixelsPerPoint, double scale, LineAlignment alignment,
+        List<DocumentLineGrouping.SentenceUnit> units, PageFontSizes fontSizes, double scale, LineAlignment alignment,
         double boldThreshold, DocxExportOptions options)
     {
-        var allLines = units.SelectMany(u => u.Lines).ToList();
-        var baseFontSizePt = PageLayoutEstimator.EstimateFontSizePoints(allLines, pixelsPerPoint, options.FontSizeMinPt, options.FontSizeMaxPt);
-        var targetFontSizePt = Math.Max(options.FontSizeMinPt, baseFontSizePt * scale);
-        var fontHalfPoints = ((int)Math.Round(targetFontSizePt * 2)).ToString();
+        // Sizes are per word (see FontSizeEstimator - usually one per line, occasionally a merged
+        // fragment of another size); an exact line height has to fit the largest of them.
+        double TargetPt(ScannedWord w) => Math.Max(options.FontSizeMinPt, fontSizes.ForWord(w) * scale);
+        var allWords = units.SelectMany(u => u.Lines).SelectMany(l => l.Words).ToList();
+        var targetFontSizePt = allWords.Count > 0
+            ? allWords.Max(TargetPt)
+            : Math.Max(options.FontSizeMinPt, units.SelectMany(u => u.Lines).Select(fontSizes.ForLine).DefaultIfEmpty(11f).Max() * scale);
 
         // Without an explicit spacing, Word's own default paragraph spacing (space-after ~8pt,
         // ~1.08x line height) applies to every one of the dozens of paragraphs this produces — a
@@ -255,12 +253,14 @@ public sealed class DocxExportService : IDocxExportService
 
         Run? run = null;
         bool? runIsBold = null;
+        string? runHalfPoints = null;
         var pendingSpace = false;
 
         foreach (var (word, breakBefore) in words)
         {
             var isBold = options.BoldDetectionEnabled && word.InkDensity >= boldThreshold;
-            if (run is null || isBold != runIsBold)
+            var fontHalfPoints = ((int)Math.Round(TargetPt(word) * 2)).ToString();
+            if (run is null || isBold != runIsBold || fontHalfPoints != runHalfPoints)
             {
                 var runProperties = isBold
                     ? new RunProperties(new RunFonts { Ascii = options.FontFamily, HighAnsi = options.FontFamily, ComplexScript = options.FontFamily }, new Bold(), new FontSize { Val = fontHalfPoints })
@@ -268,6 +268,7 @@ public sealed class DocxExportService : IDocxExportService
                 run = new Run(runProperties);
                 paragraph.Append(run);
                 runIsBold = isBold;
+                runHalfPoints = fontHalfPoints;
             }
 
             if (breakBefore)
@@ -284,7 +285,7 @@ public sealed class DocxExportService : IDocxExportService
     }
 
     private static Table BuildColumnsTable(
-        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, double pixelsPerPoint, double scale,
+        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, PageFontSizes fontSizes, double scale,
         float rightMargin, float rightMarginTolerance, double boldThreshold, DocxExportOptions options, int marginTwips)
     {
         var (pageWidthTwips, _) = PageSizes.Get(options.PageSize);
@@ -311,19 +312,19 @@ public sealed class DocxExportService : IDocxExportService
                 new GridColumn { Width = leftWidthTwips.ToString() },
                 new GridColumn { Width = rightWidthTwips.ToString() }),
             new TableRow(
-                BuildCell(left, leftWidthTwips, pixelsPerPoint, scale, rightMargin, rightMarginTolerance, boldThreshold, options),
-                BuildCell(right, rightWidthTwips, pixelsPerPoint, scale, rightMargin, rightMarginTolerance, boldThreshold, options)));
+                BuildCell(left, leftWidthTwips, fontSizes, scale, rightMargin, rightMarginTolerance, boldThreshold, options),
+                BuildCell(right, rightWidthTwips, fontSizes, scale, rightMargin, rightMarginTolerance, boldThreshold, options)));
     }
 
     private static TableCell BuildCell(
-        List<ScannedLine> lines, int widthTwips, double pixelsPerPoint, double scale, float rightMargin, float rightMarginTolerance,
+        List<ScannedLine> lines, int widthTwips, PageFontSizes fontSizes, double scale, float rightMargin, float rightMarginTolerance,
         double boldThreshold, DocxExportOptions options)
     {
         var units = DocumentLineGrouping.SplitIntoSentenceUnits(lines, rightMargin, rightMarginTolerance);
         var cell = new TableCell(
             new TableCellProperties(
                 new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
-        cell.Append(BuildParagraph(units, pixelsPerPoint, scale, LineAlignment.Left, boldThreshold, options));
+        cell.Append(BuildParagraph(units, fontSizes, scale, LineAlignment.Left, boldThreshold, options));
         return cell;
     }
 }

@@ -79,7 +79,7 @@ public sealed class DocumentScanService : IDocumentScanService
             var trustedLines = TrustCenter.FilterEntirelyBuffered(
                 textResult.Paragraphs.SelectMany(p => p.Lines), y, windowHeight, options.MarginMultiplier);
 
-            Accumulate(trustedLines, tracked, committed, options.MissingFrameGrace, page, inkThreshold, y, options.MarginMultiplier);
+            Accumulate(trustedLines, tracked, committed, options.MissingFrameGrace, page, inkThreshold, y, windowHeight, options.MarginMultiplier);
 
             if (outlierWords.Count > 0)
             {
@@ -122,12 +122,14 @@ public sealed class DocumentScanService : IDocumentScanService
         IRawImage page,
         double inkThreshold,
         int windowY,
+        int windowHeight,
         float marginMultiplier)
     {
         var seenThisFrame = new HashSet<Guid>();
         foreach (var line in lines)
         {
             seenThisFrame.Add(line.Id);
+            var heights = CleanWordHeights(line, windowY, windowHeight);
 
             if (tracked.TryGetValue(line.Id, out var existing))
             {
@@ -141,6 +143,7 @@ public sealed class DocumentScanService : IDocumentScanService
                 }
 
                 existing.TopY = line.Bounds.MinY;
+                existing.WordHeights.AddRange(heights);
                 existing.MissingFrames = 0;
                 existing.FrameCount++;
                 continue;
@@ -154,6 +157,7 @@ public sealed class DocumentScanService : IDocumentScanService
                 MaxX = line.Bounds.MaxX,
                 Height = line.Bounds.TextHeight,
                 Words = ToScannedWords(line.Words, page, inkThreshold),
+                WordHeights = heights,
                 MissingFrames = 0,
                 FrameCount = 1,
             };
@@ -231,7 +235,7 @@ public sealed class DocumentScanService : IDocumentScanService
         }
 
         return deduped
-            .Select(l => new ScannedLine(l.Text.Trim(), l.TopY, l.MinX, l.MaxX, l.Height, l.Words))
+            .Select(l => new ScannedLine(l.Text.Trim(), l.TopY, l.MinX, l.MaxX, l.Height, WithMeasuredHeights(l)))
             .ToList();
     }
 
@@ -299,8 +303,52 @@ public sealed class DocumentScanService : IDocumentScanService
         IReadOnlyList<Zaya.Primitives.OCR.IOCRWord> words, IRawImage page, double inkThreshold)
         => words.Select(w => new ScannedWord(
             w.Text, w.Bounds.MinX, w.Bounds.MaxX, w.Bounds.MinY, w.Bounds.MaxY,
-            InkDensityEstimator.MeasureDensity(page, w.Bounds.MinX, w.Bounds.MinY, w.Bounds.MaxX, w.Bounds.MaxY, inkThreshold)))
+            InkDensityEstimator.MeasureDensity(page, w.Bounds.MinX, w.Bounds.MinY, w.Bounds.MaxX, w.Bounds.MaxY, inkThreshold),
+            (Vector2.Distance(w.Bounds.P1, w.Bounds.P4) + Vector2.Distance(w.Bounds.P2, w.Bounds.P3)) / 2f))
             .ToList();
+
+    private readonly record struct WordHeightSample(float MinX, float MaxX, float Height);
+
+    /// <summary>
+    /// A word's height measured in a frame where its box stays clear of both crop edges. A line is
+    /// kept whole once any part of it reaches TrustCenter's core, so its other words - a tilted
+    /// line's far end, say - can still sit right at the crop edge with their glyphs cut off: on a
+    /// real scan such clipped readings measured 24-32px against ~40px for the same text, and the
+    /// one frame whose reading "keep longest" stores can easily be one of those. Only the clean
+    /// readings are kept, from every frame, for <see cref="WithMeasuredHeights"/>.
+    /// </summary>
+    private static List<WordHeightSample> CleanWordHeights(Zaya.Primitives.OCR.ITextLine line, int windowY, int windowHeight)
+    {
+        var result = new List<WordHeightSample>();
+        foreach (var w in line.Words)
+        {
+            var height = (Vector2.Distance(w.Bounds.P1, w.Bounds.P4) + Vector2.Distance(w.Bounds.P2, w.Bounds.P3)) / 2f;
+            var guard = height * EdgeGuardHeightFraction;
+            if (w.Bounds.MinY - windowY < guard || windowY + windowHeight - w.Bounds.MaxY < guard)
+                continue;
+            result.Add(new WordHeightSample(w.Bounds.MinX, w.Bounds.MaxX, height));
+        }
+
+        return result;
+    }
+
+    /// <summary>How far (in its own heights) a word must stay from the crop edge for its height to count as unclipped.</summary>
+    private const float EdgeGuardHeightFraction = 0.5f;
+
+    /// <summary>
+    /// The stored words with TextHeight replaced by the median of every clean reading whose center
+    /// falls inside that word's horizontal extent - a per-word vote across frames instead of one
+    /// frame's reading. A word with no clean reading keeps its own.
+    /// </summary>
+    private static List<ScannedWord> WithMeasuredHeights(TrackedLine line)
+        => line.Words.Select(w =>
+        {
+            var samples = line.WordHeights
+                .Where(h => (h.MinX + h.MaxX) / 2 >= w.MinX && (h.MinX + h.MaxX) / 2 <= w.MaxX)
+                .Select(h => h.Height)
+                .ToList();
+            return samples.Count > 0 ? w with { TextHeight = MathHelpers.Median(samples) } : w;
+        }).ToList();
 
     private sealed class TrackedLine
     {
@@ -310,6 +358,10 @@ public sealed class DocumentScanService : IDocumentScanService
         public float MaxX { get; set; }
         public float Height { get; set; }
         public List<ScannedWord> Words { get; set; } = [];
+
+        /// <summary>Clean per-frame word height measurements (see <see cref="CleanWordHeights"/>), across every frame this Id was seen in.</summary>
+        public List<WordHeightSample> WordHeights { get; set; } = [];
+
         public int MissingFrames { get; set; }
 
         /// <summary>How many frames this Id was actually seen in - used in Dedupe to break ties
