@@ -41,44 +41,75 @@ public static class RotatedTextClusterer
         return (normal, outlier);
     }
 
-    private sealed record Observation(string Text, float MinX, float MaxX, float MinY, float MaxY, float AngleDegrees);
+    /// <param name="TextHeight">Glyph height along the word's own tilt (mean of the P1-P4 and P2-P3 edges) -
+    /// for a word rotated ~65°, MaxY - MinY is closer to the word's length than to its glyph height.</param>
+    /// <param name="TextLength">Word length along its own tilt (mean of the P1-P2 and P4-P3 edges).</param>
+    private sealed record Observation(
+        string Text, float MinX, float MaxX, float MinY, float MaxY, float AngleDegrees, float TextHeight, float TextLength);
 
     /// <summary>
     /// Accumulates distinct rotated-word sightings across every frame of a scan. The sliding
     /// window passes over the same physical stamp many times, so each call is de-duplicated
     /// against everything already recorded by bounding-box overlap - the same physical word
     /// should land at nearly the same absolute position every time it's seen.
+    /// <para/>
+    /// A rotated word is tall on the page, so the horizontal window clips it in most frames it
+    /// appears in - and the first sighting is exactly the one where it has only just entered the
+    /// window. Sightings touching the window's top or bottom edge are therefore ignored, and of
+    /// two overlapping sightings the longer reading is kept: on a test stamp at -55°, keeping the
+    /// first sighting turned "КОПИЯ ВЕРНА" into fragments like "КОПИ", "Я", "ВЕРН".
     /// </summary>
     public sealed class ObservationSet
     {
         private readonly List<Observation> _items = [];
 
-        public void Add(IReadOnlyList<IOCRWord> words)
+        public void Add(IReadOnlyList<IOCRWord> words, int windowY, int windowHeight)
         {
             foreach (var w in words)
             {
                 var candidate = new Observation(
-                    w.Text, w.Bounds.MinX, w.Bounds.MaxX, w.Bounds.MinY, w.Bounds.MaxY, w.Bounds.AngleDegrees);
-                if (_items.Any(existing => Overlaps(existing, candidate)))
+                    w.Text, w.Bounds.MinX, w.Bounds.MaxX, w.Bounds.MinY, w.Bounds.MaxY, w.Bounds.AngleDegrees,
+                    (Vector2.Distance(w.Bounds.P1, w.Bounds.P4) + Vector2.Distance(w.Bounds.P2, w.Bounds.P3)) / 2f,
+                    (Vector2.Distance(w.Bounds.P1, w.Bounds.P2) + Vector2.Distance(w.Bounds.P4, w.Bounds.P3)) / 2f);
+
+                var guard = 0.5f * candidate.TextHeight;
+                if (candidate.MinY - windowY < guard || windowY + windowHeight - candidate.MaxY < guard)
                     continue;
 
-                _items.Add(candidate);
+                var existing = _items.FindIndex(e => Overlaps(e, candidate));
+                if (existing < 0)
+                    _items.Add(candidate);
+                else if (candidate.Text.Trim().Length > _items[existing].Text.Trim().Length)
+                    _items[existing] = candidate;
             }
         }
 
         public List<RotatedTextCluster> BuildClusters() => RotatedTextClusterer.BuildClusters(_items);
     }
 
+    /// <summary>
+    /// Whether two sightings are the same physical word, measured in the word's own direction:
+    /// about the same angle, centers within ~half a glyph height ACROSS the text, and ALONG it
+    /// within half the longer reading's length - so a fragment read from a clipped frame ("ОО",
+    /// "ир") still counts as the word it's part of ("ООО", "Иркутск"), while the next word on the
+    /// same line (further along than that) doesn't. Not axis-aligned box overlap: two neighboring
+    /// lines of a stamp set at 35° have page-aligned boxes overlapping by well over half, which
+    /// merged "«РОМАШКА»" and the "3801234567" line below it into one word.
+    /// </summary>
     private static bool Overlaps(Observation a, Observation b)
     {
-        var overlapX = Math.Min(a.MaxX, b.MaxX) - Math.Max(a.MinX, b.MinX);
-        var overlapY = Math.Min(a.MaxY, b.MaxY) - Math.Max(a.MinY, b.MinY);
-        if (overlapX <= 0 || overlapY <= 0)
+        if (AngleDelta(a.AngleDegrees, b.AngleDegrees) >= 15)
             return false;
 
-        var overlapArea = overlapX * overlapY;
-        var smallerArea = Math.Min((a.MaxX - a.MinX) * (a.MaxY - a.MinY), (b.MaxX - b.MinX) * (b.MaxY - b.MinY));
-        return smallerArea > 0 && overlapArea / smallerArea > 0.5f;
+        var longer = a.TextLength >= b.TextLength ? a : b;
+        var rad = longer.AngleDegrees * (MathF.PI / 180f);
+        var dir = new Vector2(MathF.Cos(rad), MathF.Sin(rad));
+        var normal = new Vector2(-dir.Y, dir.X);
+
+        var delta = new Vector2((a.MinX + a.MaxX - b.MinX - b.MaxX) / 2f, (a.MinY + a.MaxY - b.MinY - b.MaxY) / 2f);
+        var height = Math.Max(1f, Math.Min(a.TextHeight, b.TextHeight));
+        return Math.Abs(Vector2.Dot(delta, normal)) < 0.6f * height
+            && Math.Abs(Vector2.Dot(delta, dir)) <= longer.TextLength / 2f;
     }
 
     /// <summary>
@@ -140,6 +171,19 @@ public static class RotatedTextClusterer
                 continue;
 
             var words = members.Select(i => observations[i]).ToList();
+
+            // The font size has to come from the glyphs' own height along their tilt, not the
+            // axis-aligned box: that grows toward the word's length as it rotates, and gave the
+            // exported stamp text a font several times too large.
+            var wordHeights = words.Select(w => (double)w.TextHeight).Where(h => h > 0).ToList();
+            var typicalWordHeight = wordHeights.Count > 0 ? (float)Median(wordHeights) : 20f;
+
+            if (TryBuildStraightCluster(words, typicalWordHeight) is { } straight)
+            {
+                clusters.Add(straight);
+                continue;
+            }
+
             var minX = words.Min(w => w.MinX);
             var maxX = words.Max(w => w.MaxX);
             var minY = words.Min(w => w.MinY);
@@ -153,8 +197,6 @@ public static class RotatedTextClusterer
 
             var angle = (float)Median(words.Select(w => (double)w.AngleDegrees).ToList());
             var text = string.Join(" ", ordered.Select(w => w.Text));
-            var wordHeights = words.Select(w => w.MaxY - w.MinY).Where(h => h > 0).ToList();
-            var typicalWordHeight = wordHeights.Count > 0 ? Median(wordHeights) : 20f;
 
             clusters.Add(new RotatedTextCluster(
                 text, centerX, centerY, maxX - minX, maxY - minY, angle, typicalWordHeight));
@@ -162,6 +204,82 @@ public static class RotatedTextClusterer
 
         return clusters;
     }
+
+    /// <summary>
+    /// How tightly the words' angles must agree (length of their mean unit direction, 1 = all
+    /// identical) for the cluster to count as straight text set at one angle - a rectangular or
+    /// triangular stamp put on askew - rather than text following a curve. ~0.95 allows about
+    /// ±18° of per-word scatter; a round stamp's words span far more.
+    /// </summary>
+    private const double StraightAngleCoherence = 0.95;
+
+    /// <summary>
+    /// Straight rotated text (all words at about one angle): lay its words out as ordinary lines
+    /// in the cluster's own rotated frame - lines by position across the text direction, words in
+    /// a line by position along it - and size the box in that frame too. The circular reading
+    /// order (angle around the centroid) and the page-aligned footprint used for curved clusters
+    /// would scramble such a block's lines and make its box the wrong shape. Returns null for a
+    /// curved cluster.
+    /// </summary>
+    private static RotatedTextCluster? TryBuildStraightCluster(List<Observation> words, float typicalWordHeight)
+    {
+        var sum = Vector2.Zero;
+        foreach (var w in words)
+        {
+            var rad = w.AngleDegrees * (MathF.PI / 180f);
+            sum += new Vector2(MathF.Cos(rad), MathF.Sin(rad));
+        }
+
+        if (sum.Length() / words.Count < StraightAngleCoherence)
+            return null;
+
+        var dir = Vector2.Normalize(sum);
+        var normal = new Vector2(-dir.Y, dir.X);
+        var origin = new Vector2(words.Average(w => (w.MinX + w.MaxX) / 2f), words.Average(w => (w.MinY + w.MaxY) / 2f));
+
+        var placed = words
+            .Select(w =>
+            {
+                var c = new Vector2((w.MinX + w.MaxX) / 2f, (w.MinY + w.MaxY) / 2f) - origin;
+                return (Word: w, U: Vector2.Dot(c, dir), V: Vector2.Dot(c, normal));
+            })
+            .OrderBy(p => p.V)
+            .ToList();
+
+        var lines = new List<List<(Observation Word, float U, float V)>>();
+        foreach (var p in placed)
+        {
+            if (lines.Count > 0 && p.V - lines[^1][0].V <= 0.6f * typicalWordHeight)
+                lines[^1].Add(p);
+            else
+                lines.Add([p]);
+        }
+
+        var text = string.Join('\n', lines.Select(line => string.Join(" ", DropFragments(line).OrderBy(p => p.U).Select(p => p.Word.Text))));
+
+        var uMin = placed.Min(p => p.U - p.Word.TextLength / 2f);
+        var uMax = placed.Max(p => p.U + p.Word.TextLength / 2f);
+        var vMin = placed.Min(p => p.V - p.Word.TextHeight / 2f);
+        var vMax = placed.Max(p => p.V + p.Word.TextHeight / 2f);
+        var center = origin + dir * ((uMin + uMax) / 2f) + normal * ((vMin + vMax) / 2f);
+        var angle = MathF.Atan2(dir.Y, dir.X) * (180f / MathF.PI);
+
+        return new RotatedTextCluster(text, center.X, center.Y, uMax - uMin, vMax - vMin, angle, typicalWordHeight);
+    }
+
+    /// <summary>
+    /// Drops a word that is just a clipped reading of a longer word on the same line - its text
+    /// contained in the longer one's (ignoring case) and its extent along the line overlapping it.
+    /// Fragments read with a wobbly angle can slip past ObservationSet's same-word check ("ир"
+    /// next to "Иркутск" on a test stamp); within one assembled line the evidence is clearer.
+    /// </summary>
+    private static List<(Observation Word, float U, float V)> DropFragments(List<(Observation Word, float U, float V)> line)
+        => line.Where(p => !line.Any(q =>
+                !ReferenceEquals(q.Word, p.Word)
+                && q.Word.Text.Length > p.Word.Text.Length
+                && q.Word.Text.Contains(p.Word.Text.Trim(), StringComparison.OrdinalIgnoreCase)
+                && Math.Abs(q.U - p.U) < (q.Word.TextLength + p.Word.TextLength) / 2f))
+            .ToList();
 
     private static double Median(List<double> values)
     {

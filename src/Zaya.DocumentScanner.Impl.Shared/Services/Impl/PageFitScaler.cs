@@ -43,21 +43,23 @@ public static class PageFitScaler
         var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * (options.LayoutTolerancePercent / 100f);
 
         var totalPt = 0.0;
-        foreach (var block in paragraphs.SelectMany(DocumentLineGrouping.SplitIntoBlocks))
+        foreach (var block in DocumentLineGrouping.BuildBlocks(paragraphs))
         {
-            if (!block.IsColumns)
+            if (!block.IsTable)
             {
                 totalPt += EstimateGroupHeightPt(block.Lines, fontSizes, leftMargin, rightMargin, tolerance, options);
                 continue;
             }
 
-            // The two columns render side by side, in one table row - the row's height is the
-            // taller of the two, not their sum.
-            var leftUnits = DocumentLineGrouping.SplitIntoSentenceUnits(block.Left!, rightMargin, tolerance);
-            var rightUnits = DocumentLineGrouping.SplitIntoSentenceUnits(block.Right!, rightMargin, tolerance);
-            totalPt += Math.Max(
-                EstimateUnitsHeightPt(leftUnits, fontSizes),
-                EstimateUnitsHeightPt(rightUnits, fontSizes));
+            // Each table row is as tall as its tallest cell, not the sum of its cells.
+            foreach (var row in block.Table!.Rows)
+            {
+                totalPt += row
+                    .Where(cell => cell.Count > 0)
+                    .Select(cell => EstimateUnitsHeightPt(DocumentLineGrouping.SplitIntoSentenceUnits(cell, rightMargin, tolerance), fontSizes))
+                    .DefaultIfEmpty(0)
+                    .Max();
+            }
         }
 
         var (_, pageHeightTwips) = PageSizes.Get(options.PageSize);

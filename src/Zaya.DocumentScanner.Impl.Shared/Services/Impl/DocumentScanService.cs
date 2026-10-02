@@ -85,7 +85,7 @@ public sealed class DocumentScanService : IDocumentScanService
             if (outlierWords.Count > 0)
             {
                 var offsetOutliers = new OffsetOcrResult(outlierWords, ocrResult.Confidence, new Vector2(0, y));
-                rotatedObservations.Add(offsetOutliers.Words);
+                rotatedObservations.Add(offsetOutliers.Words, y, windowHeight);
             }
 
             if (progress is not null)
@@ -98,7 +98,8 @@ public sealed class DocumentScanService : IDocumentScanService
         }
 
         committed.AddRange(tracked.Values);
-        return new ScanResult(Dedupe(committed), rotatedObservations.BuildClusters());
+        var clusters = rotatedObservations.BuildClusters();
+        return new ScanResult(RemoveRotatedDuplicates(Dedupe(committed), clusters), clusters);
     }
 
     /// <summary>
@@ -241,7 +242,12 @@ public sealed class DocumentScanService : IDocumentScanService
             for (var i = deduped.Count - 1; i >= 0 && line.TopY - deduped[i].TopY < SamePositionMaxDy; i--)
             {
                 var prevText = deduped[i].Text.Trim();
-                var overlapsText = text.Contains(prevText, StringComparison.Ordinal)
+                // Whole-string equality ignores case: OCR flips the case of a lone letter between
+                // frames ("Ж" vs "ж"), and for a one-character string no edit-distance ratio can call
+                // that a near match. The substring test stays case-sensitive - ignoring case there
+                // swallowed the heading "Лечение" as a fragment of the line "лечение, коррекция...".
+                var overlapsText = string.Equals(text, prevText, StringComparison.OrdinalIgnoreCase)
+                    || text.Contains(prevText, StringComparison.Ordinal)
                     || prevText.Contains(text, StringComparison.Ordinal);
                 if (IsSamePosition(line, deduped[i]) && (overlapsText || IsNearDuplicate(text, prevText)))
                 {
@@ -276,6 +282,49 @@ public sealed class DocumentScanService : IDocumentScanService
     /// narrower one's width. Y-proximity alone isn't enough: two genuinely different lines (e.g.
     /// side-by-side columns) can sit at the same height without being the same line at all.
     /// </summary>
+    /// <summary>
+    /// Drops words of ordinary lines that are just a stray copy of rotated-block text: the word's
+    /// center lies inside the block's own rotated box and its text already appears in the block's
+    /// text. The per-frame angle test sorting words into rotated vs. normal sees each sighting on
+    /// its own, and a clipped or wobbly reading of a word at ~35° can measure just under the
+    /// threshold in a frame or two (29.5° on a test stamp) - that reading then also comes out as
+    /// normal text, alone or glued onto a nearby line ("Аллергоанамнез: отрицает доки"). Both
+    /// conditions together keep normal text a stamp merely overlaps; words under 3 characters are
+    /// never dropped, since a short word is too easily "contained" in any stamp text. A line with
+    /// nothing left is removed.
+    /// </summary>
+    private static IReadOnlyList<ScannedLine> RemoveRotatedDuplicates(IReadOnlyList<ScannedLine> lines, IReadOnlyList<RotatedTextCluster> clusters)
+    {
+        if (clusters.Count == 0)
+            return lines;
+
+        var result = new List<ScannedLine>();
+        foreach (var line in lines)
+        {
+            var kept = line.Words.Where(w => !clusters.Any(c => IsStrayCopy(w, c))).ToList();
+            if (kept.Count == line.Words.Count)
+                result.Add(line);
+            else if (kept.Count > 0)
+                result.Add(line with { Text = string.Join(" ", kept.Select(w => w.Text)), MinX = kept.Min(w => w.MinX), MaxX = kept.Max(w => w.MaxX), Words = kept });
+        }
+
+        return result;
+    }
+
+    private static bool IsStrayCopy(ScannedWord word, RotatedTextCluster cluster)
+    {
+        var text = word.Text.Trim();
+        if (text.Length < 3 || !cluster.Text.Contains(text, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var center = new Vector2((word.MinX + word.MaxX) / 2f, (word.MinY + word.MaxY) / 2f) - new Vector2(cluster.CenterX, cluster.CenterY);
+        var rad = cluster.AngleDegrees * (MathF.PI / 180f);
+        var dir = new Vector2(MathF.Cos(rad), MathF.Sin(rad));
+        var normal = new Vector2(-dir.Y, dir.X);
+        return Math.Abs(Vector2.Dot(center, dir)) <= cluster.Width * 0.6f
+            && Math.Abs(Vector2.Dot(center, normal)) <= cluster.Height * 0.6f;
+    }
+
     /// <summary>Roughly one text line's height, in px.</summary>
     private const float SamePositionMaxDy = 60;
 

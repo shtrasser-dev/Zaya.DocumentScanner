@@ -47,10 +47,10 @@ public static class DocumentPreviewBuilder
             var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * (options.LayoutTolerancePercent / 100f);
             var boldThreshold = PageLayoutEstimator.EstimateBoldDensityThreshold(lines);
 
-            foreach (var block in paragraphs.SelectMany(DocumentLineGrouping.SplitIntoBlocks))
+            foreach (var block in DocumentLineGrouping.BuildBlocks(paragraphs))
             {
-                if (block.IsColumns)
-                    body.Children.Add(BuildColumnsGrid(block.Left!.ToList(), block.Right!.ToList(), page, fontSizes, fitScale, rightMargin, tolerance, boldThreshold, options, scale));
+                if (block.IsTable)
+                    body.Children.Add(BuildTableGrid(block.Table!, fontSizes, fitScale, rightMargin, tolerance, boldThreshold, options, scale));
                 else
                     AppendAligned(body, block.Lines, fontSizes, fitScale, leftMargin, rightMargin, tolerance, boldThreshold, options, scale);
             }
@@ -108,26 +108,33 @@ public static class DocumentPreviewBuilder
             body.Children.Add(BuildParagraphBlock(units, fontSizes, fitScale, alignment, boldThreshold, options, scale));
     }
 
-    private static Grid BuildColumnsGrid(
-        List<ScannedLine> left, List<ScannedLine> right, PageMetrics page, PageFontSizes fontSizes, double fitScale,
+    /// <summary>Same row/column layout as DocxExportService.BuildTable, as an Avalonia grid.</summary>
+    private static Grid BuildTableGrid(
+        TextTable table, PageFontSizes fontSizes, double fitScale,
         float rightMargin, float rightMarginTolerance, double boldThreshold, DocxExportOptions options, double scale)
     {
-        var splitX = (left.Max(l => l.MaxX) + right.Min(l => l.MinX)) / 2.0;
-        var leftFraction = Math.Clamp(page.WidthPx <= 0 ? 0.5 : splitX / page.WidthPx, 0.15, 0.85);
-
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition(leftFraction, GridUnitType.Star));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(1 - leftFraction, GridUnitType.Star));
+        foreach (var fraction in table.ColumnWidthFractions)
+            grid.ColumnDefinitions.Add(new ColumnDefinition(fraction, GridUnitType.Star));
+        foreach (var _ in table.Rows)
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 
-        var leftUnits = DocumentLineGrouping.SplitIntoSentenceUnits(left, rightMargin, rightMarginTolerance);
-        var rightUnits = DocumentLineGrouping.SplitIntoSentenceUnits(right, rightMargin, rightMarginTolerance);
+        for (var r = 0; r < table.Rows.Count; r++)
+        {
+            for (var c = 0; c < table.Rows[r].Count; c++)
+            {
+                var cellLines = table.Rows[r][c];
+                if (cellLines.Count == 0)
+                    continue;
 
-        var leftBlock = BuildParagraphBlock(leftUnits, fontSizes, fitScale, LineAlignment.Left, boldThreshold, options, scale);
-        var rightBlock = BuildParagraphBlock(rightUnits, fontSizes, fitScale, LineAlignment.Left, boldThreshold, options, scale);
-        Grid.SetColumn(rightBlock, 1);
+                var units = DocumentLineGrouping.SplitIntoSentenceUnits(cellLines, rightMargin, rightMarginTolerance);
+                var block = BuildParagraphBlock(units, fontSizes, fitScale, LineAlignment.Left, boldThreshold, options, scale);
+                Grid.SetRow(block, r);
+                Grid.SetColumn(block, c);
+                grid.Children.Add(block);
+            }
+        }
 
-        grid.Children.Add(leftBlock);
-        grid.Children.Add(rightBlock);
         return grid;
     }
 

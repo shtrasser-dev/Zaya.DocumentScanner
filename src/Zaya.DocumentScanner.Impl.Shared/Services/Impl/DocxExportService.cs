@@ -2,6 +2,9 @@ using System.Globalization;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Vml;
+using A = DocumentFormat.OpenXml.Drawing;
+using Wp = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using Wps = DocumentFormat.OpenXml.Office2010.Word.DrawingShape;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Zaya.DocumentScanner.Impl.Shared.Models;
 using Zaya.Logging.Models;
@@ -19,6 +22,13 @@ public sealed class DocxExportService : IDocxExportService
         using var document = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
         var mainPart = document.AddMainDocumentPart();
         mainPart.Document = new Document();
+        // Rotated text boxes are DrawingML word-processing shapes (see AppendRotatedClusters),
+        // wrapped in mc:AlternateContent whose Choice requires the "wps" prefix - it has to be
+        // declared on the root for Word to resolve that requirement.
+        mainPart.Document.AddNamespaceDeclaration("mc", "http://schemas.openxmlformats.org/markup-compatibility/2006");
+        mainPart.Document.AddNamespaceDeclaration("wp", "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing");
+        mainPart.Document.AddNamespaceDeclaration("a", "http://schemas.openxmlformats.org/drawingml/2006/main");
+        mainPart.Document.AddNamespaceDeclaration("wps", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape");
         var body = mainPart.Document.AppendChild(new Body());
         var shapeIdCounter = 1;
 
@@ -73,15 +83,14 @@ public sealed class DocxExportService : IDocxExportService
         var tolerance = PageLayoutEstimator.EstimateTypicalHeight(lines) * (options.LayoutTolerancePercent / 100f);
         var boldThreshold = PageLayoutEstimator.EstimateBoldDensityThreshold(lines);
 
-        // A letterhead-style or table stretch (e.g. clinic info left, patient info right) renders
-        // as a borderless two-cell table; any line that didn't cleanly fit either column stays an
-        // ordinary paragraph at its own place in reading order (see SplitIntoBlocks).
-        foreach (var block in paragraphs.SelectMany(DocumentLineGrouping.SplitIntoBlocks))
+        // A letterhead-style or table stretch (e.g. labels | values | address box | clinic block)
+        // renders as a borderless row/column table; any line that didn't cleanly fit one column
+        // stays an ordinary paragraph at its own place in reading order (see SplitIntoBlocks).
+        foreach (var block in DocumentLineGrouping.BuildBlocks(paragraphs))
         {
-            if (block.IsColumns)
+            if (block.IsTable)
             {
-                body.Append(BuildColumnsTable(
-                    block.Left!.ToList(), block.Right!.ToList(), page.WidthPx, fontSizes, scale, rightMargin, tolerance, boldThreshold, options, marginTwips));
+                body.Append(BuildTable(block.Table!, fontSizes, scale, rightMargin, tolerance, boldThreshold, options, marginTwips));
             }
             else
             {
@@ -100,9 +109,11 @@ public sealed class DocxExportService : IDocxExportService
     /// unreadable (see DocumentScanService's own notes on the word-dropping and curved-line-assembly
     /// attempts that were tried and abandoned before this).
     ///
-    /// Uses legacy VML (w:pict/v:shape), not DrawingML, specifically because VML's rotation is a
-    /// plain degrees value in the shape's own style string - no nested transform matrix to get
-    /// wrong - and it's still fully supported by current Word. Position is estimated the same way
+    /// The box is a DrawingML word-processing shape (wps:wsp, rotation in a:xfrm) with the old VML
+    /// text box (v:shape, rotation:N in its style) as the mc:AlternateContent fallback - the same
+    /// pairing Word itself writes. VML alone isn't enough: Word rotates a legacy VML text box's
+    /// outline but always draws its text horizontally, which is exactly what a real export showed;
+    /// DrawingML text boxes rotate their text with the shape. Position is estimated the same way
     /// EstimateLeftMargin anchors normal text: the cluster's source-page pixel position, relative
     /// to the first recognized text's own top-left (page content doesn't start at pixel (0,0) in
     /// the source photo), scaled to points and offset by the page's own configured margin.
@@ -139,10 +150,12 @@ public sealed class DocxExportService : IDocxExportService
             // text wouldn't fit, computed here rather than left to Word's own auto-fit: auto-fit
             // combined with rotation was the likely cause of text rendering unrotated while the
             // shape's own outline still showed rotated (see this method's own notes below).
-            var widthPt = Math.Max(30.0, cluster.Width / pixelsPerPoint);
+            // A little slack over the measured width: the export font is rarely the source's, and a
+            // straight stamp's lines (sized to the source text exactly) would otherwise re-wrap.
+            var widthPt = Math.Max(30.0, cluster.Width / pixelsPerPoint * 1.15);
             var avgCharWidthPt = fontSizePt * 0.55;
             var charsPerLine = Math.Max(1, (int)(widthPt / avgCharWidthPt));
-            var linesNeeded = Math.Max(1, (int)Math.Ceiling((double)cluster.Text.Length / charsPerLine));
+            var linesNeeded = Math.Max(1, cluster.Text.Split('\n').Sum(l => (int)Math.Ceiling((double)Math.Max(1, l.Length) / charsPerLine)));
             var estimatedHeightPt = linesNeeded * fontSizePt * 1.3;
             var heightPt = Math.Max(Math.Max(10.0, cluster.Height / pixelsPerPoint), estimatedHeightPt);
 
@@ -158,6 +171,7 @@ public sealed class DocxExportService : IDocxExportService
                 "rotation:{4:F1};mso-position-horizontal-relative:page;mso-position-vertical-relative:page;z-index:1",
                 leftPt, topPt, widthPt, heightPt, cluster.AngleDegrees);
 
+            var shapeId = shapeIdCounter;
             var shape = new Shape
             {
                 Id = $"ZayaRotated{shapeIdCounter++}",
@@ -171,16 +185,92 @@ public sealed class DocxExportService : IDocxExportService
                 new RunProperties(
                     new RunFonts { Ascii = options.FontFamily, HighAnsi = options.FontFamily, ComplexScript = options.FontFamily },
                     new FontSize { Val = fontHalfPoints }));
-            textRun.Append(new Text(cluster.Text) { Space = SpaceProcessingModeValues.Preserve });
+            // A straight stamp's text comes as lines (see RotatedTextClusterer) - keep them as lines.
+            var textLines = cluster.Text.Split('\n');
+            for (var li = 0; li < textLines.Length; li++)
+            {
+                if (li > 0)
+                    textRun.Append(new Break());
+                textRun.Append(new Text(textLines[li]) { Space = SpaceProcessingModeValues.Preserve });
+            }
 
             var textBox = new TextBox { Inset = "0,0,0,0" };
-            textBox.Append(new TextBoxContent(new Paragraph(textRun)));
+            textBox.Append(new TextBoxContent(new Paragraph((Run)textRun.CloneNode(true))));
             shape.Append(textBox);
 
-            paragraph.Append(new Run(new Picture(shape)));
+            var drawing = BuildRotatedTextBox(shapeId, leftPt, topPt, widthPt, heightPt, cluster.AngleDegrees, textRun);
+            paragraph.Append(new Run(new AlternateContent(
+                new AlternateContentChoice(drawing) { Requires = "wps" },
+                new AlternateContentFallback(new Picture(shape)))));
         }
 
         body.Append(paragraph);
+    }
+
+    /// <summary>
+    /// A floating, page-positioned DrawingML text box rotated by <paramref name="angleDegrees"/>
+    /// (clockwise, as in the source image) around its own center - the position is that of the
+    /// unrotated box, as with VML. No fill, no outline, no auto-fit (see the size notes above).
+    /// </summary>
+    private static Drawing BuildRotatedTextBox(
+        int id, double leftPt, double topPt, double widthPt, double heightPt, double angleDegrees, Run textRun)
+    {
+        const long emuPerPoint = 12700;
+        var cx = (long)Math.Round(widthPt * emuPerPoint);
+        var cy = (long)Math.Round(heightPt * emuPerPoint);
+        var normalized = ((angleDegrees % 360) + 360) % 360;
+        var rotation = (int)Math.Round(normalized * 60000) % 21600000;
+
+        var shape = new Wps.WordprocessingShape(
+            new Wps.NonVisualDrawingShapeProperties { TextBox = true },
+            new Wps.ShapeProperties(
+                new A.Transform2D(new A.Offset { X = 0, Y = 0 }, new A.Extents { Cx = cx, Cy = cy }) { Rotation = rotation },
+                new A.PresetGeometry(new A.AdjustValueList()) { Preset = A.ShapeTypeValues.Rectangle },
+                new A.NoFill(),
+                new A.Outline(new A.NoFill())),
+            new Wps.TextBoxInfo2(new TextBoxContent(new Paragraph(textRun))),
+            new Wps.TextBodyProperties(new A.NoAutoFit())
+            {
+                Rotation = 0,
+                Vertical = A.TextVerticalValues.Horizontal,
+                Wrap = A.TextWrappingValues.Square,
+                LeftInset = 0,
+                TopInset = 0,
+                RightInset = 0,
+                BottomInset = 0,
+                Anchor = A.TextAnchoringTypeValues.Top,
+            });
+
+        var anchor = new Wp.Anchor(
+            new Wp.SimplePosition { X = 0, Y = 0 },
+            new Wp.HorizontalPosition(new Wp.PositionOffset(((long)Math.Round(leftPt * emuPerPoint)).ToString(CultureInfo.InvariantCulture)))
+            {
+                RelativeFrom = Wp.HorizontalRelativePositionValues.Page,
+            },
+            new Wp.VerticalPosition(new Wp.PositionOffset(((long)Math.Round(topPt * emuPerPoint)).ToString(CultureInfo.InvariantCulture)))
+            {
+                RelativeFrom = Wp.VerticalRelativePositionValues.Page,
+            },
+            new Wp.Extent { Cx = cx, Cy = cy },
+            new Wp.EffectExtent { LeftEdge = 0, TopEdge = 0, RightEdge = 0, BottomEdge = 0 },
+            new Wp.WrapNone(),
+            new Wp.DocProperties { Id = (UInt32Value)(uint)id, Name = $"ZayaRotated{id}" },
+            new Wp.NonVisualGraphicFrameDrawingProperties(),
+            new A.Graphic(new A.GraphicData(shape) { Uri = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape" }))
+        {
+            DistanceFromTop = 0U,
+            DistanceFromBottom = 0U,
+            DistanceFromLeft = 0U,
+            DistanceFromRight = 0U,
+            SimplePos = false,
+            RelativeHeight = (UInt32Value)(uint)(251658240 + id),
+            BehindDoc = false,
+            Locked = false,
+            LayoutInCell = true,
+            AllowOverlap = true,
+        };
+
+        return new Drawing(anchor);
     }
 
     /// <summary>
@@ -284,21 +374,19 @@ public sealed class DocxExportService : IDocxExportService
         return paragraph;
     }
 
-    private static Table BuildColumnsTable(
-        List<ScannedLine> left, List<ScannedLine> right, int pageWidthPx, PageFontSizes fontSizes, double scale,
+    private static Table BuildTable(
+        TextTable table, PageFontSizes fontSizes, double scale,
         float rightMargin, float rightMarginTolerance, double boldThreshold, DocxExportOptions options, int marginTwips)
     {
         var (pageWidthTwips, _) = PageSizes.Get(options.PageSize);
         var usableWidthTwips = pageWidthTwips - 2 * marginTwips;
 
-        // Split the table at the midpoint of the gap between the two blocks, scaled from source
-        // pixels to document twips, so the columns keep roughly the same proportions as the scan.
-        var splitX = (left.Max(l => l.MaxX) + right.Min(l => l.MinX)) / 2.0;
-        var leftFraction = Math.Clamp(splitX / pageWidthPx, 0.15, 0.85);
-        var leftWidthTwips = (int)Math.Round(leftFraction * usableWidthTwips);
-        var rightWidthTwips = usableWidthTwips - leftWidthTwips;
+        // Column widths keep the scan's own proportions (see TableLayout.ColumnWidthFractions);
+        // the last column takes the rounding remainder so the grid sums to the usable width.
+        var widths = table.ColumnWidthFractions.Select(f => (int)Math.Round(f * usableWidthTwips)).ToList();
+        widths[^1] = usableWidthTwips - widths.Take(widths.Count - 1).Sum();
 
-        return new Table(
+        var result = new Table(
             new TableProperties(
                 new TableWidth { Width = usableWidthTwips.ToString(), Type = TableWidthUnitValues.Dxa },
                 new TableBorders(
@@ -308,22 +396,34 @@ public sealed class DocxExportService : IDocxExportService
                     new RightBorder { Val = BorderValues.None },
                     new InsideHorizontalBorder { Val = BorderValues.None },
                     new InsideVerticalBorder { Val = BorderValues.None })),
-            new TableGrid(
-                new GridColumn { Width = leftWidthTwips.ToString() },
-                new GridColumn { Width = rightWidthTwips.ToString() }),
-            new TableRow(
-                BuildCell(left, leftWidthTwips, fontSizes, scale, rightMargin, rightMarginTolerance, boldThreshold, options),
-                BuildCell(right, rightWidthTwips, fontSizes, scale, rightMargin, rightMarginTolerance, boldThreshold, options)));
+            new TableGrid(widths.Select(w => new GridColumn { Width = w.ToString() })));
+
+        foreach (var row in table.Rows)
+        {
+            result.Append(new TableRow(row.Select((cellLines, c) =>
+                BuildCell(cellLines, widths[c], fontSizes, scale, rightMargin, rightMarginTolerance, boldThreshold, options))));
+        }
+
+        return result;
     }
 
     private static TableCell BuildCell(
-        List<ScannedLine> lines, int widthTwips, PageFontSizes fontSizes, double scale, float rightMargin, float rightMarginTolerance,
+        IReadOnlyList<ScannedLine> lines, int widthTwips, PageFontSizes fontSizes, double scale, float rightMargin, float rightMarginTolerance,
         double boldThreshold, DocxExportOptions options)
     {
-        var units = DocumentLineGrouping.SplitIntoSentenceUnits(lines, rightMargin, rightMarginTolerance);
         var cell = new TableCell(
             new TableCellProperties(
                 new TableCellWidth { Width = widthTwips.ToString(), Type = TableWidthUnitValues.Dxa }));
+
+        // Every cell needs at least one paragraph; an empty one gets no spacing of its own so it
+        // doesn't make its row taller than the cells that do have text.
+        if (lines.Count == 0)
+        {
+            cell.Append(new Paragraph(new ParagraphProperties(new SpacingBetweenLines { Before = "0", After = "0" })));
+            return cell;
+        }
+
+        var units = DocumentLineGrouping.SplitIntoSentenceUnits(lines, rightMargin, rightMarginTolerance);
         cell.Append(BuildParagraph(units, fontSizes, scale, LineAlignment.Left, boldThreshold, options));
         return cell;
     }

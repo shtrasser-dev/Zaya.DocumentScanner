@@ -234,55 +234,105 @@ public static class DocumentLineGrouping
     }
 
     /// <summary>
-    /// One piece of a paragraph group, in reading order: either ordinary lines, or a two-column
-    /// stretch (<see cref="Left"/>/<see cref="Right"/> non-null) rendered side by side.
+    /// One piece of a paragraph group, in reading order: either ordinary lines, or a stretch of
+    /// side-by-side columns laid out as a row/column grid (<see cref="Table"/> non-null).
     /// </summary>
     public sealed record LayoutBlock(
-        IReadOnlyList<ScannedLine> Lines, IReadOnlyList<ScannedLine>? Left = null, IReadOnlyList<ScannedLine>? Right = null)
+        IReadOnlyList<ScannedLine> Lines, TextTable? Table = null, IReadOnlyList<IReadOnlyList<ScannedLine>>? Columns = null)
     {
-        public bool IsColumns => Left is not null && Right is not null;
+        public bool IsTable => Table is not null;
     }
 
     /// <summary>
-    /// Splits a paragraph group into blocks in reading order (see <see cref="TryDetectTwoColumns"/>).
-    /// A line that straddles both columns - typically two neighboring table cells OCR merged into
-    /// one line - can't go in either column, so it ends the current two-column stretch and stays
-    /// where it is, between that stretch and the next one. Moving such lines before/after the whole
-    /// two-column block instead (as was done earlier) put a merged row from the middle of a table
-    /// below every later row on a real scan.
+    /// All blocks of a page, in reading order: <see cref="SplitIntoBlocks"/> per paragraph group,
+    /// then consecutive tables with the same columns joined back into one. Paragraph grouping cuts
+    /// at unusually large vertical gaps, and a table row whose cells wrap onto two lines leaves
+    /// exactly such a gap - which split one exercise table into three and pushed each wrapped
+    /// cell's second line ("клюв.", "дом.") into an otherwise empty first row of the next piece.
     /// </summary>
-    public static List<LayoutBlock> SplitIntoBlocks(IReadOnlyList<ScannedLine> group)
+    public static List<LayoutBlock> BuildBlocks(IReadOnlyList<IReadOnlyList<ScannedLine>> paragraphs)
     {
-        if (!TryDetectTwoColumns(group, out var left, out var right, out _))
+        var pageSlope = TableLayout.EstimatePageTilt(paragraphs.SelectMany(p => p).ToList());
+        var result = new List<LayoutBlock>();
+        foreach (var block in paragraphs.SelectMany(p => SplitIntoBlocks(p, pageSlope)))
+        {
+            if (result.Count > 0 && result[^1].Columns is { } prev && block.Columns is { } next && SameColumns(prev, next))
+            {
+                var columns = prev.Zip(next, (a, b) => (IReadOnlyList<ScannedLine>)a.Concat(b).ToList()).ToList();
+                result[^1] = new LayoutBlock(columns.SelectMany(c => c).ToList(), TableLayout.BuildTable(columns, pageSlope), columns);
+                continue;
+            }
+
+            result.Add(block);
+        }
+
+        return result;
+    }
+
+    /// <summary>Same number of columns, each overlapping its counterpart horizontally.</summary>
+    private static bool SameColumns(IReadOnlyList<IReadOnlyList<ScannedLine>> a, IReadOnlyList<IReadOnlyList<ScannedLine>> b)
+    {
+        if (a.Count != b.Count)
+            return false;
+
+        for (var i = 0; i < a.Count; i++)
+        {
+            var overlap = Math.Min(a[i].Max(l => l.MaxX), b[i].Max(l => l.MaxX)) - Math.Max(a[i].Min(l => l.MinX), b[i].Min(l => l.MinX));
+            if (overlap <= 0)
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Splits a paragraph group into blocks in reading order (columns via
+    /// <see cref="TableLayout.DetectColumns"/>, any number of them). A line that straddles columns -
+    /// typically two neighboring table cells OCR merged into one line - can't go in any one column,
+    /// so it ends the current column stretch and stays where it is, between that stretch and the
+    /// next one. Moving such lines before/after the whole block instead (as was done earlier) put a
+    /// merged row from the middle of a table below every later row on a real scan.
+    /// </summary>
+    public static List<LayoutBlock> SplitIntoBlocks(IReadOnlyList<ScannedLine> group, float pageSlope)
+    {
+        var columns = TableLayout.DetectColumns(group, out _);
+        if (columns.Count < 2)
             return [new LayoutBlock(group)];
 
-        var leftSet = left.ToHashSet(ReferenceEqualityComparer.Instance);
-        var rightSet = right.ToHashSet(ReferenceEqualityComparer.Instance);
+        var columnOf = new Dictionary<ScannedLine, int>(ReferenceEqualityComparer.Instance);
+        for (var c = 0; c < columns.Count; c++)
+            foreach (var line in columns[c])
+                columnOf[line] = c;
 
         var blocks = new List<LayoutBlock>();
-        var segLeft = new List<ScannedLine>();
-        var segRight = new List<ScannedLine>();
+        var segment = Enumerable.Range(0, columns.Count).Select(_ => new List<ScannedLine>()).ToArray();
 
-        // A stretch only renders side by side under the same "at least two lines on each side"
-        // rule TryDetectTwoColumns applies to the whole group - otherwise one stray line can make
-        // a table on its own, e.g. a centered heading sitting right of two short left-aligned
-        // lines below it. A stretch that fails the rule stays ordinary lines, in reading order.
+        // A stretch only renders as a table under the same "at least two lines on each side" rule
+        // TryDetectTwoColumns applies to the whole group - at least two columns with two or more
+        // lines each - otherwise one stray line can make a table on its own, e.g. a centered
+        // heading sitting right of two short left-aligned lines below it. A stretch that fails the
+        // rule stays ordinary lines, in reading order.
         void Flush()
         {
-            if (segLeft.Count >= 2 && segRight.Count >= 2)
-                blocks.Add(new LayoutBlock([.. segLeft, .. segRight], segLeft.ToList(), segRight.ToList()));
-            else if (segLeft.Count + segRight.Count > 0)
-                blocks.Add(new LayoutBlock(segLeft.Concat(segRight).OrderBy(l => l.TopY).ToList()));
-            segLeft.Clear();
-            segRight.Clear();
+            var present = segment.Where(c => c.Count > 0).ToList();
+            if (present.Count(c => c.Count >= 2) >= 2)
+            {
+                var columnsInStretch = present.Select(c => (IReadOnlyList<ScannedLine>)c.ToList()).ToList();
+                blocks.Add(new LayoutBlock(present.SelectMany(c => c).ToList(), TableLayout.BuildTable(columnsInStretch, pageSlope), columnsInStretch));
+            }
+            else if (present.Count > 0)
+            {
+                blocks.Add(new LayoutBlock(present.SelectMany(c => c).OrderBy(l => l.TopY).ToList()));
+            }
+
+            foreach (var c in segment)
+                c.Clear();
         }
 
         foreach (var line in group)
         {
-            if (leftSet.Contains(line))
-                segLeft.Add(line);
-            else if (rightSet.Contains(line))
-                segRight.Add(line);
+            if (columnOf.TryGetValue(line, out var c))
+                segment[c].Add(line);
             else
             {
                 Flush();

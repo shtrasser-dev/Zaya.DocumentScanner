@@ -7,10 +7,13 @@ namespace Zaya.DocumentScanner.Impl.Shared.Models;
 /// document instead of being forced into the linear reading order at zero rotation, which a
 /// genuinely rotated source can't survive without losing content or becoming unreadable.
 /// </summary>
-/// <param name="Text">Member words joined in roughly the order they'd be read around the cluster.</param>
+/// <param name="Text">Member words in reading order: for straight text set at one angle (an askew
+/// rectangular/triangular stamp) its lines, separated by '\n'; for curved text (a round stamp) one
+/// run of words ordered by angle around the cluster's center.</param>
 /// <param name="CenterX">Horizontal center of the cluster's bounding box, in source page pixels.</param>
 /// <param name="CenterY">Vertical center of the cluster's bounding box, in source page pixels.</param>
-/// <param name="Width">Bounding box width, in source page pixels. This is the cluster's spatial
+/// <param name="Width">Box width, in source page pixels - for straight text measured along its own
+/// angle (the rotated box's real width); otherwise the page-aligned bounding box. The latter is the cluster's spatial
 /// footprint (how far its words are spread around, e.g. a stamp's diameter) - NOT how much space
 /// the text needs once laid out in an ordinary wrapped text box; those can differ a lot for text
 /// that was originally arranged in a circle, so this is a starting point for the export box size,
