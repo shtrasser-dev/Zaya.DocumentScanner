@@ -10,15 +10,16 @@ namespace Zaya.DocumentScanner.Impl.Shared.Models;
 /// <param name="Text">Member words in reading order: for straight text set at one angle (an askew
 /// rectangular/triangular stamp) its lines, separated by '\n'; for curved text (a round stamp) one
 /// run of words ordered by angle around the cluster's center.</param>
-/// <param name="CenterX">Horizontal center of the cluster's bounding box, in source page pixels.</param>
-/// <param name="CenterY">Vertical center of the cluster's bounding box, in source page pixels.</param>
-/// <param name="Width">Box width, in source page pixels - for straight text measured along its own
-/// angle (the rotated box's real width); otherwise the page-aligned bounding box. The latter is the cluster's spatial
-/// footprint (how far its words are spread around, e.g. a stamp's diameter) - NOT how much space
-/// the text needs once laid out in an ordinary wrapped text box; those can differ a lot for text
-/// that was originally arranged in a circle, so this is a starting point for the export box size,
-/// not the final one.</param>
-/// <param name="Height">Bounding box height, in source page pixels. Same caveat as <see cref="Width"/>.</param>
+/// <param name="CenterX">Horizontal center of the cluster's box, in source page pixels.</param>
+/// <param name="CenterY">Vertical center of the cluster's box, in source page pixels.</param>
+/// <param name="Width">Box width, in source page pixels. For straight text it is measured along
+/// the text's own angle - the rotated box's real width. For curved text it is the page-aligned
+/// bounding box: the cluster's spatial footprint (how far its words are spread around, e.g. a
+/// stamp's diameter) - NOT how much space the text needs once laid out in an ordinary wrapped
+/// text box; those can differ a lot for text that was originally arranged in a circle, so this is
+/// a starting point for the export box size, not the final one.</param>
+/// <param name="Height">Box height, in source page pixels - across the text's own angle for
+/// straight text, page-aligned for curved text. Same caveat as <see cref="Width"/>.</param>
 /// <param name="AngleDegrees">Representative rotation of the cluster's text, in degrees.</param>
 /// <param name="TypicalWordHeightPx">Median height of the cluster's own member words, in source
 /// page pixels - the right basis for the exported font size, unlike <see cref="Height"/> (which

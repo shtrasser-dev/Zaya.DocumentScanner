@@ -55,9 +55,9 @@ public static class PageLayoutEstimator
             return 11f;
 
         var fontSize = MedianHeight(lines) / pixelsPerPoint;
-        // A wide upper bound: this is called per line/block, not once for the whole document, so
-        // a genuine heading several times taller than body text must stay distinguishable instead
-        // of being flattened to the same ceiling as every other large element.
+        // Only the fallback for a page with no measurable words now - FontSizeEstimator decides
+        // sizes from word heights (a line's height is the layout engine's display rail, not a
+        // measurement). The upper bound stays wide so a genuinely large element isn't flattened.
         return Math.Clamp((float)fontSize, minPt, maxPt);
     }
 

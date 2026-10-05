@@ -72,18 +72,20 @@ public static class FontSizeEstimator
 
     /// <summary>
     /// Fallback log-ratios of each class's height to the Full class, when the page has too few
-    /// words of a class to measure it - in line with what a real scan's word boxes showed.
+    /// words of a class to measure it. Rounded from what three real scans measured (x-height
+    /// 1.03-1.12, ascender 1.03-1.09, descender 1.00-1.07) - small, because OneOCR's word boxes
+    /// are only loosely fitted to the glyphs.
     /// </summary>
-    private static readonly double[] DefaultProfileOffsets = [Math.Log(1.45), Math.Log(1.12), Math.Log(1.12), 0];
+    private static readonly double[] DefaultProfileOffsets = [Math.Log(1.08), Math.Log(1.05), Math.Log(1.04), 0];
 
     private const string AscenderLetters = "бёйbdfhklt" + "0123456789" + "()[]{}/\\|!?\"'№%&@#$";
     private const string DescenderLetters = "руфдцщДЦЩgjpqy" + "()[]{}/\\|,;";
 
-    private sealed record Sample(ScannedLine Line, ScannedWord Word, int Letters, double Weight, double Value);
+    private sealed record Sample(ScannedWord Word, int Letters, double Weight, double Value);
 
     public static PageFontSizes Estimate(IReadOnlyList<ScannedLine> lines, double pixelsPerPoint, float minPt, float maxPt)
     {
-        var raw = new List<(ScannedLine Line, ScannedWord Word, int Letters, LetterProfile Profile, double LogHeight)>();
+        var raw = new List<(ScannedWord Word, int Letters, LetterProfile Profile, double LogHeight)>();
         foreach (var line in lines)
         {
             foreach (var word in line.Words)
@@ -91,7 +93,7 @@ public static class FontSizeEstimator
                 var letters = word.Text.Count(char.IsLetterOrDigit);
                 if (letters == 0 || word.TextHeight <= 0)
                     continue;
-                raw.Add((line, word, letters, Classify(word.Text), Math.Log(word.TextHeight)));
+                raw.Add((word, letters, Classify(word.Text), Math.Log(word.TextHeight)));
             }
         }
 
@@ -104,7 +106,7 @@ public static class FontSizeEstimator
 
         var offsets = MeasureProfileOffsets(raw.Select(r => (r.Letters, r.Profile, r.LogHeight)).ToList());
         var samples = raw
-            .Select(r => new Sample(r.Line, r.Word, r.Letters, Math.Min(r.Letters, MaxWordWeight), r.LogHeight + offsets[(int)r.Profile]))
+            .Select(r => new Sample(r.Word, r.Letters, Math.Min(r.Letters, MaxWordWeight), r.LogHeight + offsets[(int)r.Profile]))
             .ToList();
 
         var centers = Cluster(samples);

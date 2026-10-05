@@ -295,7 +295,7 @@ public static class DocumentLineGrouping
     /// </summary>
     public static List<LayoutBlock> SplitIntoBlocks(IReadOnlyList<ScannedLine> group, float pageSlope)
     {
-        var columns = TableLayout.DetectColumns(group, out _);
+        var columns = TableLayout.DetectColumns(group);
         if (columns.Count < 2)
             return [new LayoutBlock(group)];
 

@@ -27,9 +27,9 @@ public sealed class DocumentScanOptions
     public int StepPercentOfLine { get; init; } = 200;
 
     /// <summary>
-    /// Words within this many multiples of the frame's own median text height from the
-    /// crop's top/bottom edge are dropped before layout — they're at risk of being clipped
-    /// mid-glyph by the window boundary.
+    /// A line lying entirely within this many multiples of its own text height from the crop's
+    /// top/bottom edge is not trusted in that frame (see TrustCenter) — it's at risk of being
+    /// clipped mid-glyph by the window boundary.
     /// </summary>
     public float MarginMultiplier { get; init; } = 1.2f;
 

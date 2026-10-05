@@ -27,24 +27,22 @@ public static class TableLayout
     /// <see cref="DocumentLineGrouping.TryDetectTwoColumns"/> recursively to each side of every
     /// split it finds - the same evidence rule (two or more lines on each side, non-overlapping
     /// extents) at every level, so a sub-split only happens where that rule holds again. Lines
-    /// that straddle a split at any level are returned in <paramref name="ambiguous"/>.
+    /// that straddle a split at any level end up in no column.
     /// </summary>
-    public static List<List<ScannedLine>> DetectColumns(IReadOnlyList<ScannedLine> group, out List<ScannedLine> ambiguous)
+    public static List<List<ScannedLine>> DetectColumns(IReadOnlyList<ScannedLine> group)
     {
-        ambiguous = [];
         var columns = new List<List<ScannedLine>>();
-        Split(group, 0, columns, ambiguous);
+        Split(group, 0, columns);
         return columns.OrderBy(c => c.Min(l => l.MinX)).ToList();
     }
 
-    private static void Split(IReadOnlyList<ScannedLine> lines, int depth, List<List<ScannedLine>> columns, List<ScannedLine> ambiguous)
+    private static void Split(IReadOnlyList<ScannedLine> lines, int depth, List<List<ScannedLine>> columns)
     {
         if (depth < MaxColumnSplitDepth
-            && DocumentLineGrouping.TryDetectTwoColumns(lines, out var left, out var right, out var straddling))
+            && DocumentLineGrouping.TryDetectTwoColumns(lines, out var left, out var right, out _))
         {
-            ambiguous.AddRange(straddling);
-            Split(left, depth + 1, columns, ambiguous);
-            Split(right, depth + 1, columns, ambiguous);
+            Split(left, depth + 1, columns);
+            Split(right, depth + 1, columns);
             return;
         }
 

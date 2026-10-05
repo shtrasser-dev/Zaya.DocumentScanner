@@ -1,8 +1,10 @@
 using System.Numerics;
 using Zaya.DocumentScanner.Impl.Shared.Models;
 using Zaya.Logging.Models;
+using Zaya.OCR.Models;
 using Zaya.OCR.Services;
 using Zaya.Primitives;
+using Zaya.Primitives.OCR;
 
 namespace Zaya.DocumentScanner.Impl.Shared.Services.Impl;
 
@@ -37,14 +39,19 @@ public sealed class DocumentScanService : IDocumentScanService
         // one frame that sees a rotated stamp whole, its rotated words are added to the stamp
         // observations too (no extra cost - the pass is needed for the window size anyway).
         var wholePage = await RecognizeWholePageAsync(ocrSession, page, cancellationToken).ConfigureAwait(false);
+
         // Window height and step are both in units of this page's own line pitch: on a test set
         // the best window was ~6-10 lines whatever the text size, and stepping 2 lines per frame
         // matched 15px stepping in quality at 3-4x the speed (quality held up to ~3 lines; half a
         // line was worse - each line passed through so many frames that its readings fragmented).
+        // A page with no text to measure falls back to the old quarter-page window and 15px step.
         var pitch = EstimateLinePitch(wholePage);
-        var windowHeight = options.WindowHeight
-            ?? (pitch is { } p ? Math.Clamp((int)Math.Round(options.WindowLines * p), 48, page.Height + 2 * WholePagePad) : Math.Max(1, page.Height / 4));
-        var step = pitch is { } q ? Math.Max(1, (int)Math.Round(q * options.StepPercentOfLine / 100.0)) : FallbackStepPx;
+        var windowHeight = options.WindowHeight ?? (pitch is { } windowPitch
+            ? Math.Clamp((int)Math.Round(options.WindowLines * windowPitch), MinWindowHeightPx, page.Height + 2 * WholePagePad)
+            : Math.Max(1, page.Height / 4));
+        var step = pitch is { } stepPitch
+            ? Math.Max(1, (int)Math.Round(stepPitch * options.StepPercentOfLine / 100.0))
+            : FallbackStepPx;
 
         // A line sitting right at the very top or bottom of the real page would otherwise never
         // get a window position clear of both edges - the window can't start before row 0 or end
@@ -137,7 +144,7 @@ public sealed class DocumentScanService : IDocumentScanService
     /// that silence is expected, not a real disappearance.
     /// </summary>
     private static void Accumulate(
-        IEnumerable<Zaya.Primitives.OCR.ITextLine> lines,
+        IEnumerable<ITextLine> lines,
         Dictionary<Guid, TrackedLine> tracked,
         List<TrackedLine> committed,
         int missingFrameGrace,
@@ -259,6 +266,7 @@ public sealed class DocumentScanService : IDocumentScanService
             // slightly mispositioned reading), so check every kept line still within the
             // same-position Y window.
             var duplicateOf = -1;
+            var replacedFragment = false;
             for (var i = deduped.Count - 1; i >= 0 && line.TopY - deduped[i].TopY < SamePositionMaxDy; i--)
             {
                 var prevText = deduped[i].Text.Trim();
@@ -284,15 +292,16 @@ public sealed class DocumentScanService : IDocumentScanService
                     break;
                 }
 
+                // ...and the other way round: the fragment was kept first, this line replaces it.
                 if (IsFragmentOf(deduped[i], line))
                 {
                     deduped[i] = line;
-                    duplicateOf = -2;
+                    replacedFragment = true;
                     break;
                 }
             }
 
-            if (duplicateOf == -2)
+            if (replacedFragment)
                 continue;
 
             if (duplicateOf >= 0)
@@ -318,6 +327,9 @@ public sealed class DocumentScanService : IDocumentScanService
     /// <summary>Scan step when the page has no text to measure a line pitch from.</summary>
     private const int FallbackStepPx = 15;
 
+    /// <summary>Lower bound for a line-pitch-derived window, whatever the measured pitch.</summary>
+    private const int MinWindowHeightPx = 48;
+
     /// <summary>
     /// This page's line pitch in px, measured from one quick OCR pass over the whole page (about a
     /// second - a small fraction of the scan itself), or null when it has no text. A fixed
@@ -331,7 +343,7 @@ public sealed class DocumentScanService : IDocumentScanService
     /// membership taken from the OCR engine's own line index when it reports one. Falls back to
     /// 1.6x the median word height.
     /// </summary>
-    private static float? EstimateLinePitch(Zaya.Primitives.OCR.IOCRResult result)
+    private static float? EstimateLinePitch(IOCRResult result)
     {
         if (result.Words.Count == 0)
             return null;
@@ -341,7 +353,7 @@ public sealed class DocumentScanService : IDocumentScanService
             .ToList());
 
         var ocrLines = result.Words
-            .Select((w, i) => (Word: w, Key: (w as Zaya.OCR.Models.IOCRWordExt)?.LineIndex ?? -1 - i))
+            .Select((w, i) => (Word: w, Key: (w as IOCRWordExt)?.LineIndex ?? -1 - i))
             .GroupBy(x => x.Key)
             .Select(g => (
                 CenterY: g.Average(x => (x.Word.Bounds.MinY + x.Word.Bounds.MaxY) / 2f),
@@ -372,8 +384,8 @@ public sealed class DocumentScanService : IDocumentScanService
     private const int WholePagePad = 32;
 
     /// <summary>OCR of the whole page in one frame, padded by <see cref="WholePagePad"/> (coordinates are crop-relative).</summary>
-    private static async Task<Zaya.Primitives.OCR.IOCRResult> RecognizeWholePageAsync(
-        Zaya.OCR.Services.IOCRSession ocrSession, IRawImage page, CancellationToken cancellationToken)
+    private static async Task<IOCRResult> RecognizeWholePageAsync(
+        IOCRSession ocrSession, IRawImage page, CancellationToken cancellationToken)
     {
         using var crop = RawImageCropper.CropRowsPadded(page, -WholePagePad, page.Height + 2 * WholePagePad);
         return await ocrSession.RecognizeAsync(crop, cancellationToken).ConfigureAwait(false);
@@ -504,7 +516,7 @@ public sealed class DocumentScanService : IDocumentScanService
     }
 
     private static List<ScannedWord> ToScannedWords(
-        IReadOnlyList<Zaya.Primitives.OCR.IOCRWord> words, IRawImage page, double inkThreshold)
+        IReadOnlyList<IOCRWord> words, IRawImage page, double inkThreshold)
         => words.Select(w => new ScannedWord(
             w.Text, w.Bounds.MinX, w.Bounds.MaxX, w.Bounds.MinY, w.Bounds.MaxY,
             InkDensityEstimator.MeasureDensity(page, w.Bounds.MinX, w.Bounds.MinY, w.Bounds.MaxX, w.Bounds.MaxY, inkThreshold),
@@ -521,7 +533,7 @@ public sealed class DocumentScanService : IDocumentScanService
     /// one frame whose reading "keep longest" stores can easily be one of those. Only the clean
     /// readings are kept, from every frame, for <see cref="WithMeasuredHeights"/>.
     /// </summary>
-    private static List<WordHeightSample> CleanWordHeights(Zaya.Primitives.OCR.ITextLine line, int windowY, int windowHeight)
+    private static List<WordHeightSample> CleanWordHeights(ITextLine line, int windowY, int windowHeight)
     {
         var result = new List<WordHeightSample>();
         foreach (var w in line.Words)

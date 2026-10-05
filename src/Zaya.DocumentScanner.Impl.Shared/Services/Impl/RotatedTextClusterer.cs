@@ -114,11 +114,12 @@ public static class RotatedTextClusterer
 
     /// <summary>
     /// Groups observations by proximity (union-find over a "close enough to be the same
-    /// stamp/block" graph), one cluster per connected group. Each cluster's words are ordered by
-    /// angular position around the cluster's own centroid - a natural, parameter-free
-    /// approximation of reading order around a circular stamp, without needing the word-to-line
-    /// assembler to solve it. Single-word groups are dropped as more likely a stray misread than
-    /// genuinely rotated content worth its own text box.
+    /// stamp/block" graph), one cluster per connected group. A cluster whose words all sit at
+    /// about one angle is laid out as straight lines (<see cref="TryBuildStraightCluster"/>);
+    /// otherwise its words are ordered by angular position around the cluster's own centroid - a
+    /// natural, parameter-free approximation of reading order around a circular stamp, without
+    /// needing the word-to-line assembler to solve it. Single-word groups are dropped as more
+    /// likely a stray misread than genuinely rotated content worth its own text box.
     /// </summary>
     private static List<RotatedTextCluster> BuildClusters(IReadOnlyList<Observation> observations)
     {

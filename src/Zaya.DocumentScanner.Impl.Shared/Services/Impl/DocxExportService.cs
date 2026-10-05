@@ -147,9 +147,9 @@ public sealed class DocxExportService : IDocxExportService
             // ARE, not how much room their text needs once laid out as ordinary wrapped lines -
             // those can be very different for text that was originally arranged in a circle. Grow
             // the box height (not width - keep it visually compact) if a rough estimate says the
-            // text wouldn't fit, computed here rather than left to Word's own auto-fit: auto-fit
-            // combined with rotation was the likely cause of text rendering unrotated while the
-            // shape's own outline still showed rotated (see this method's own notes below).
+            // text wouldn't fit, computed here rather than left to Word's own auto-fit, so the
+            // DrawingML box and its VML fallback get the same, predictable size.
+            //
             // A little slack over the measured width: the export font is rarely the source's, and a
             // straight stamp's lines (sized to the source text exactly) would otherwise re-wrap.
             var widthPt = Math.Max(30.0, cluster.Width / pixelsPerPoint * 1.15);
@@ -159,12 +159,11 @@ public sealed class DocxExportService : IDocxExportService
             var estimatedHeightPt = linesNeeded * fontSizePt * 1.3;
             var heightPt = Math.Max(Math.Max(10.0, cluster.Height / pixelsPerPoint), estimatedHeightPt);
 
-            // Fixed size, no "mso-fit-shape-to-text" - that auto-fit, combined with an explicit
-            // rotation, was reproducibly rendering the shape's outline rotated but its text
-            // content NOT rotated (a real Word rendering bug/quirk, not a guess - seen directly in
-            // a generated document). A plain VML textbox without auto-fit doesn't clip overflow by
-            // default, so a slightly-too-small estimate here still shows all the text, just
-            // extending past the drawn box rather than losing anything.
+            // The VML fallback: fixed size, no "mso-fit-shape-to-text". A plain VML textbox without
+            // auto-fit doesn't clip overflow by default, so a slightly-too-small estimate here
+            // still shows all the text, just extending past the drawn box rather than losing
+            // anything. (Its text stays horizontal in Word whatever the rotation says - that's
+            // what the DrawingML shape below is for.)
             var style = string.Format(
                 CultureInfo.InvariantCulture,
                 "position:absolute;margin-left:{0:F2}pt;margin-top:{1:F2}pt;width:{2:F2}pt;height:{3:F2}pt;" +
