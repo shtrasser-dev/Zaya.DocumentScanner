@@ -22,9 +22,24 @@
              with the window since nothing here caps its height. -->
         <TabControl Name="ResultTabs" Margin="12,0,12,12">
             <TabItem Header="Исходный документ">
-                <ScrollViewer Name="SourceScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                    <StackPanel Name="SourcePagesPanel" Spacing="12" />
-                </ScrollViewer>
+                <!-- One source page at a time, with a pager underneath - not all pages stacked in
+                     one long scroll. -->
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Bottom"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                Spacing="8"
+                                Margin="0,8,0,0">
+                        <Button Name="PrevPageButton" Content="◀" IsEnabled="False" Click="OnPrevPageClick"
+                                ToolTip.Tip="Предыдущая страница" />
+                        <TextBlock Name="PageIndicator" VerticalAlignment="Center" MinWidth="130" TextAlignment="Center" />
+                        <Button Name="NextPageButton" Content="▶" IsEnabled="False" Click="OnNextPageClick"
+                                ToolTip.Tip="Следующая страница" />
+                    </StackPanel>
+                    <ScrollViewer Name="SourceScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <ContentControl Name="SourcePageHost" HorizontalAlignment="Center" />
+                    </ScrollViewer>
+                </DockPanel>
             </TabItem>
             <TabItem Header="Результат">
                 <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">

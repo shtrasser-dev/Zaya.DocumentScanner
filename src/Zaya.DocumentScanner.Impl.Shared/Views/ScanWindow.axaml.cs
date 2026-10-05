@@ -30,6 +30,10 @@ public partial class ScanWindow : Window
     private readonly IApplicationProfileService _applicationProfileService;
     private readonly List<ScannedPage> _pages = [];
 
+    // One preview per source file loaded so far; the tab shows a single one at a time.
+    private readonly List<ScanPreviewCanvas> _sourcePages = [];
+    private int _currentSourcePage = -1;
+
     public ScanWindow()
     {
         _filePaths = [];
@@ -81,8 +85,11 @@ public partial class ScanWindow : Window
                 page = _fileLoader.Load(path);
                 var pageMetrics = new PageMetrics(page.Width, page.Height);
 
+                // Each file gets a page of its own, and the tab follows the scan: the page being
+                // processed is the one on screen, whatever page the user had paged to before.
                 var pageCanvas = new ScanPreviewCanvas();
-                SourcePagesPanel.Children.Add(pageCanvas);
+                _sourcePages.Add(pageCanvas);
+                ShowSourcePage(_sourcePages.Count - 1);
 
                 var bitmap = _bitmapService.ToBitmap(page);
                 var maxWidth = SourceScroll.Bounds.Width > 0 ? SourceScroll.Bounds.Width - 4 : SourcePreviewFallbackWidth;
@@ -123,6 +130,26 @@ public partial class ScanWindow : Window
         SaveDocxButton.IsEnabled = _pages.Count > 0;
         ResultTabs.SelectedIndex = 1;
     }
+
+    private void ShowSourcePage(int index)
+    {
+        if (index < 0 || index >= _sourcePages.Count)
+            return;
+
+        _currentSourcePage = index;
+        SourcePageHost.Content = _sourcePages[index];
+        SourceScroll.Offset = default;
+
+        // Counted against every queued file, not just the pages loaded so far, so the indicator
+        // doesn't read "1 из 1" while the first of several files is still being scanned.
+        PageIndicator.Text = $"Страница {index + 1} из {Math.Max(_filePaths.Count, _sourcePages.Count)}";
+        PrevPageButton.IsEnabled = index > 0;
+        NextPageButton.IsEnabled = index < _sourcePages.Count - 1;
+    }
+
+    private void OnPrevPageClick(object? sender, RoutedEventArgs e) => ShowSourcePage(_currentSourcePage - 1);
+
+    private void OnNextPageClick(object? sender, RoutedEventArgs e) => ShowSourcePage(_currentSourcePage + 1);
 
     private async void OnSaveDocxClick(object? sender, RoutedEventArgs e)
     {
