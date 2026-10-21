@@ -41,7 +41,7 @@
 
   <!-- Renders SettingDescriptor lists as Avalonia controls (used by the settings panel). -->
   <ItemGroup>
-    <ProjectReference Include="..\..\..\Zaya.UI\src\Zaya.UI.Impl\Zaya.UI.Impl.csproj" />
+    <PackageReference Include="Zaya.UI.Impl" Version="$(ZayaUiVersion)" />
   </ItemGroup>
 
 </Project>

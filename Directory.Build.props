@@ -5,6 +5,7 @@
 
     <ZayaLoggingVersion>1.0.0</ZayaLoggingVersion>
     <ZayaOcrVersion>2.1.0</ZayaOcrVersion>
+    <ZayaUiVersion>2.0.0</ZayaUiVersion>
 
     <!-- Host app default when ZayaVersionRole is unset. -->
     <ZayaHostVersionMinor>1</ZayaHostVersionMinor>
